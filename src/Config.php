@@ -139,4 +139,9 @@ final class Config
     {
         return trim($this->get('SHORTCUT_REDIRECT_PREFIX', 's'), '/');
     }
+
+    public function isDebug(): bool
+    {
+        return $this->getBool('APP_DEBUG', false);
+    }
 }

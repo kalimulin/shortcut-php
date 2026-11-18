@@ -119,7 +119,9 @@ final class AuthController
             $this->mailer->sendVerificationEmail($login, $code, $token);
         }
 
-        $isDebug = $this->config !== null && $this->config->isDebug();
+        $isDebug = $this->config !== null && method_exists($this->config, 'isDebug')
+            ? $this->config->isDebug()
+            : false;
 
         Response::json([
             'status' => 'verification_required',
@@ -247,7 +249,9 @@ final class AuthController
             $this->mailer->sendVerificationEmail($email, $code, $token);
         }
 
-        $isDebug = $this->config !== null && $this->config->isDebug();
+        $isDebug = $this->config !== null && method_exists($this->config, 'isDebug')
+            ? $this->config->isDebug()
+            : false;
 
         Response::json([
             'ok' => true,
