@@ -99,7 +99,7 @@ final class AuthController
         $code = (string) random_int(100000, 999999);
         $token = bin2hex(random_bytes(24));
         $verifId = Uuid::v4();
-        $expiresAt = $now->modify('+15 minutes');
+        $expiresAt = $now->modify('+30 minutes');
         $expiresAtMysql = DateHelper::toMysqlUtc($expiresAt);
 
         if ($this->verificationRepo !== null) {
@@ -128,7 +128,7 @@ final class AuthController
             'verificationRequired' => true,
             'email' => $login,
             'message' => 'Код подтверждения отправлен на ваш e-mail',
-            'expiresInSeconds' => 900,
+            'expiresInSeconds' => 1800,
             ...($isDebug ? ['debugCode' => $code] : []),
         ], 201);
     }
@@ -157,9 +157,9 @@ final class AuthController
             throw ApiException::badRequest('INVALID_CODE', 'Неверный или устаревший код подтверждения');
         }
 
-        $expiresAt = new DateTimeImmutable((string) $record['expires_at']);
+        $expiresAt = DateHelper::parseUtc((string) $record['expires_at']);
         $now = DateHelper::nowUtc();
-        if ($now > $expiresAt) {
+        if ($expiresAt === null || $now > $expiresAt) {
             $this->verificationRepo->delete((string) $record['id']);
             throw ApiException::badRequest('CODE_EXPIRED', 'Срок действия кода истёк. Запросите код повторно.');
         }
@@ -217,12 +217,14 @@ final class AuthController
         if ($this->verificationRepo !== null) {
             $latest = $this->verificationRepo->findLatestByEmail($email);
             if ($latest !== null) {
-                $createdAt = new DateTimeImmutable((string) $latest['created_at']);
-                $now = DateHelper::nowUtc();
-                $diff = $now->getTimestamp() - $createdAt->getTimestamp();
-                if ($diff < 60) {
-                    $wait = 60 - $diff;
-                    throw ApiException::tooManyRequests("Повторный код можно запросить через {$wait} сек.");
+                $createdAt = DateHelper::parseUtc((string) $latest['created_at']);
+                if ($createdAt !== null) {
+                    $now = DateHelper::nowUtc();
+                    $diff = $now->getTimestamp() - $createdAt->getTimestamp();
+                    if ($diff < 60) {
+                        $wait = 60 - $diff;
+                        throw ApiException::tooManyRequests("Повторный код можно запросить через {$wait} сек.");
+                    }
                 }
             }
         }
@@ -231,7 +233,7 @@ final class AuthController
         $token = bin2hex(random_bytes(24));
         $verifId = Uuid::v4();
         $now = DateHelper::nowUtc();
-        $expiresAt = $now->modify('+15 minutes');
+        $expiresAt = $now->modify('+30 minutes');
 
         if ($this->verificationRepo !== null) {
             $this->verificationRepo->create(
@@ -256,7 +258,7 @@ final class AuthController
         Response::json([
             'ok' => true,
             'message' => 'Новый проверочный код отправлен на ваш e-mail',
-            'expiresInSeconds' => 900,
+            'expiresInSeconds' => 1800,
             ...($isDebug ? ['debugCode' => $code] : []),
         ]);
     }
