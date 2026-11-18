@@ -38,21 +38,41 @@ final class UserRepository
         string $nowMysql,
         int $isVerified = 0,
     ): void {
-        $stmt = $this->db->pdo()->prepare(
-            'INSERT INTO users (id, login, password_hash, role, is_verified, contact_email, created_at, updated_at)
-             VALUES (:id, :login, :password_hash, :role, :is_verified, :contact_email, :created_at, :updated_at)'
-        );
         $normalized = strtolower(trim($login));
-        $stmt->execute([
-            ':id' => $id,
-            ':login' => $normalized,
-            ':password_hash' => $passwordHash,
-            ':role' => $role,
-            ':is_verified' => $isVerified,
-            ':contact_email' => str_contains($normalized, '@') ? $normalized : null,
-            ':created_at' => $nowMysql,
-            ':updated_at' => $nowMysql,
-        ]);
+        try {
+            $stmt = $this->db->pdo()->prepare(
+                'INSERT INTO users (id, login, password_hash, role, is_verified, contact_email, created_at, updated_at)
+                 VALUES (:id, :login, :password_hash, :role, :is_verified, :contact_email, :created_at, :updated_at)'
+            );
+            $stmt->execute([
+                ':id' => $id,
+                ':login' => $normalized,
+                ':password_hash' => $passwordHash,
+                ':role' => $role,
+                ':is_verified' => $isVerified,
+                ':contact_email' => str_contains($normalized, '@') ? $normalized : null,
+                ':created_at' => $nowMysql,
+                ':updated_at' => $nowMysql,
+            ]);
+        } catch (\PDOException $e) {
+            if (str_contains($e->getMessage(), 'is_verified')) {
+                $stmt = $this->db->pdo()->prepare(
+                    'INSERT INTO users (id, login, password_hash, role, contact_email, created_at, updated_at)
+                     VALUES (:id, :login, :password_hash, :role, :contact_email, :created_at, :updated_at)'
+                );
+                $stmt->execute([
+                    ':id' => $id,
+                    ':login' => $normalized,
+                    ':password_hash' => $passwordHash,
+                    ':role' => $role,
+                    ':contact_email' => str_contains($normalized, '@') ? $normalized : null,
+                    ':created_at' => $nowMysql,
+                    ':updated_at' => $nowMysql,
+                ]);
+                return;
+            }
+            throw $e;
+        }
     }
 
     public function markVerified(string $id, string $nowMysql): void

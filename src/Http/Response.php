@@ -38,14 +38,19 @@ final class Response
         exit;
     }
 
-    public static function error(int $statusCode, string $code, string $message): never
+    /** @param array<string, mixed>|null $details */
+    public static function error(int $statusCode, string $code, string $message, ?array $details = null): never
     {
-        self::json([
+        $payload = [
             'error' => [
                 'code' => $code,
                 'message' => $message,
             ],
-        ], $statusCode);
+        ];
+        if ($details !== null) {
+            $payload['error']['details'] = $details;
+        }
+        self::json($payload, $statusCode);
     }
 
     /** @param array<string, string> $headers */

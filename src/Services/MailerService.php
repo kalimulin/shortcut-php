@@ -120,6 +120,11 @@ HTML;
 
     private function sendNativeMail(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null): bool
     {
+        if (!function_exists('mail')) {
+            $this->logMail($toEmail, $subject, "FUNCTION mail() IS NOT AVAILABLE:\n" . $htmlBody);
+            return false;
+        }
+
         $fromEmail = $this->getFromEmail();
         $fromName = $this->config->get('MAIL_FROM_NAME', 'Омни Ссылки');
 
@@ -146,8 +151,19 @@ HTML;
             . chunk_split(base64_encode($htmlBody)) . "\r\n"
             . "--{$boundary}--\r\n";
 
-        // Вызов встроенной функции mail()
-        return @mail($toEmail, $encodedSubject, $message, implode("\r\n", $headers));
+        // Попытка отправки с 5-м параметром -f (требуется на многих хостингах)
+        $cleanFrom = preg_replace('/[^a-zA-Z0-9@._-]/', '', $fromEmail);
+        $sent = @mail($toEmail, $encodedSubject, $message, implode("\r\n", $headers), "-f" . ($cleanFrom ?: $fromEmail));
+        if (!$sent) {
+            // Если хостинг запрещает 5-й параметр, пробуем без него
+            $sent = @mail($toEmail, $encodedSubject, $message, implode("\r\n", $headers));
+        }
+
+        if (!$sent) {
+            $this->logMail($toEmail, $subject, "mail() returned false\n\n" . $htmlBody);
+        }
+
+        return $sent;
     }
 
     private function sendSmtp(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null): bool

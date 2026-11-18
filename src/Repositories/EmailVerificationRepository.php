@@ -23,26 +23,65 @@ final class EmailVerificationRepository
     ): void {
         $pdo = $this->db->pdo();
         
-        // Удаляем старые коды для этого email
-        $del = $pdo->prepare('DELETE FROM email_verifications WHERE email = :email OR user_id = :user_id');
-        $del->execute([
-            ':email' => strtolower(trim($email)),
-            ':user_id' => $userId,
-        ]);
+        try {
+            // Удаляем старые коды для этого email
+            $del = $pdo->prepare('DELETE FROM email_verifications WHERE email = :email OR user_id = :user_id');
+            $del->execute([
+                ':email' => strtolower(trim($email)),
+                ':user_id' => $userId,
+            ]);
 
-        $stmt = $pdo->prepare(
-            'INSERT INTO email_verifications (id, user_id, email, code, token, attempts, expires_at, created_at)
-             VALUES (:id, :user_id, :email, :code, :token, 0, :expires_at, :created_at)'
-        );
-        $stmt->execute([
-            ':id' => $id,
-            ':user_id' => $userId,
-            ':email' => strtolower(trim($email)),
-            ':code' => trim($code),
-            ':token' => trim($token),
-            ':expires_at' => $expiresAtMysql,
-            ':created_at' => $nowMysql,
-        ]);
+            $stmt = $pdo->prepare(
+                'INSERT INTO email_verifications (id, user_id, email, code, token, attempts, expires_at, created_at)
+                 VALUES (:id, :user_id, :email, :code, :token, 0, :expires_at, :created_at)'
+            );
+            $stmt->execute([
+                ':id' => $id,
+                ':user_id' => $userId,
+                ':email' => strtolower(trim($email)),
+                ':code' => trim($code),
+                ':token' => trim($token),
+                ':expires_at' => $expiresAtMysql,
+                ':created_at' => $nowMysql,
+            ]);
+        } catch (\PDOException $e) {
+            if (str_contains($e->getMessage(), 'email_verifications')) {
+                $this->createTable($pdo);
+                $stmt = $pdo->prepare(
+                    'INSERT INTO email_verifications (id, user_id, email, code, token, attempts, expires_at, created_at)
+                     VALUES (:id, :user_id, :email, :code, :token, 0, :expires_at, :created_at)'
+                );
+                $stmt->execute([
+                    ':id' => $id,
+                    ':user_id' => $userId,
+                    ':email' => strtolower(trim($email)),
+                    ':code' => trim($code),
+                    ':token' => trim($token),
+                    ':expires_at' => $expiresAtMysql,
+                    ':created_at' => $nowMysql,
+                ]);
+                return;
+            }
+            throw $e;
+        }
+    }
+
+    private function createTable(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS email_verifications (
+            id         CHAR(36)     NOT NULL PRIMARY KEY,
+            user_id    CHAR(36)     NOT NULL,
+            email      VARCHAR(255) NOT NULL,
+            code       VARCHAR(16)  NOT NULL,
+            token      VARCHAR(64)  NOT NULL,
+            attempts   INT          NOT NULL DEFAULT 0,
+            expires_at DATETIME     NOT NULL,
+            created_at DATETIME     NOT NULL,
+            INDEX idx_email_verif_lookup (email, code),
+            INDEX idx_email_verif_token (token),
+            INDEX idx_email_verif_expires (expires_at),
+            CONSTRAINT fk_email_verif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     }
 
     /** @return array<string, mixed>|null */

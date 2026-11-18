@@ -7,6 +7,7 @@ namespace App;
 use PDO;
 use PDOException;
 use RuntimeException;
+use Throwable;
 
 final class Database
 {
@@ -38,10 +39,81 @@ final class Database
                 PDO::ATTR_EMULATE_PREPARES => false,
             ]);
             $pdo->exec("SET time_zone = '+00:00'");
+
+            // Автоматическое накатывание недостающих таблиц и колонок
+            $this->autoMigrate($pdo);
+
             $this->pdo = $pdo;
             return $pdo;
         } catch (PDOException $e) {
             throw new RuntimeException('Ошибка подключения к базе данных: ' . $e->getMessage(), 0, $e);
+        }
+    }
+
+    private function autoMigrate(PDO $pdo): void
+    {
+        static $migrated = false;
+        if ($migrated) {
+            return;
+        }
+        $migrated = true;
+
+        // 1. Проверяем, существует ли таблица users; если нет, накатываем полный 001_init.sql
+        try {
+            $stmt = $pdo->query("SHOW TABLES LIKE 'users'");
+            $hasUsers = $stmt ? (bool) $stmt->fetch() : false;
+
+            if (!$hasUsers) {
+                $candidates = [
+                    dirname(__DIR__) . '/database/migrations/001_init.sql',
+                    dirname(__DIR__, 2) . '/database/migrations/001_init.sql',
+                    dirname(__DIR__) . '/001_init.sql',
+                    __DIR__ . '/001_init.sql',
+                ];
+                foreach ($candidates as $file) {
+                    if (is_file($file)) {
+                        $sql = file_get_contents($file);
+                        if ($sql !== false && $sql !== '') {
+                            $pdo->exec($sql);
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable) {
+            // Игнорируем
+        }
+
+        // 2. Проверяем наличие колонки is_verified в таблице users
+        try {
+            $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'is_verified'");
+            if ($stmt && $stmt->fetch() === false) {
+                $pdo->exec("ALTER TABLE users 
+                    ADD COLUMN is_verified TINYINT(1) NOT NULL DEFAULT 0 AFTER role,
+                    ADD COLUMN verified_at DATETIME NULL AFTER is_verified");
+            }
+        } catch (Throwable) {
+            // Игнорируем
+        }
+
+        // 3. Создаём таблицу email_verifications, если её нет
+        try {
+            $pdo->exec("CREATE TABLE IF NOT EXISTS email_verifications (
+                id         CHAR(36)     NOT NULL PRIMARY KEY,
+                user_id    CHAR(36)     NOT NULL,
+                email      VARCHAR(255) NOT NULL,
+                code       VARCHAR(16)  NOT NULL,
+                token      VARCHAR(64)  NOT NULL,
+                attempts   INT          NOT NULL DEFAULT 0,
+                expires_at DATETIME     NOT NULL,
+                created_at DATETIME     NOT NULL,
+                INDEX idx_email_verif_lookup (email, code),
+                INDEX idx_email_verif_token (token),
+                INDEX idx_email_verif_expires (expires_at),
+                CONSTRAINT fk_email_verif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        } catch (Throwable) {
+            // Игнорируем
         }
     }
 }

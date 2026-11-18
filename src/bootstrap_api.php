@@ -75,7 +75,7 @@ try {
     $rateLimit = new RateLimitMiddleware($rateLimitRepo);
 
     // Контроллеры
-    $infoCtrl = new InfoController($config);
+    $infoCtrl = new InfoController($config, $db);
     $authCtrl = new AuthController($userRepo, $jwt, $emailVerificationRepo, $mailerService, $botProtection, $config);
     $profileCtrl = new ProfileController($userRepo);
     $publicCtrl = new PublicController($shortcutService, $urlCheckService, $qrSvgService);
@@ -144,9 +144,28 @@ try {
 
     $router->dispatch($request);
 } catch (ApiException $e) {
-    Response::error($e->statusCode, $e->errorCode, $e->getMessage());
+    Response::error($e->statusCode, $e->errorCode, $e->getMessage(), $e->details);
 } catch (Throwable $e) {
+    $logDir = dirname(__DIR__) . '/storage/logs';
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0755, true);
+    }
+    $logFile = $logDir . '/error.log';
+    $logEntry = sprintf(
+        "[%s] ERROR 500: %s in %s:%d\nStack trace:\n%s\n%s\n",
+        date('Y-m-d H:i:s'),
+        $e->getMessage(),
+        $e->getFile(),
+        $e->getLine(),
+        $e->getTraceAsString(),
+        str_repeat('=', 60)
+    );
+    @file_put_contents($logFile, $logEntry, FILE_APPEND);
+    @error_log('Shortcut API Error: ' . $e->getMessage());
+
     $debug = $config->getBool('APP_DEBUG', false);
-    $message = $debug ? $e->getMessage() : 'Внутренняя ошибка сервера';
-    Response::error(500, 'INTERNAL_ERROR', $message);
+    $message = $debug
+        ? ($e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine())
+        : 'Внутренняя ошибка сервера: ' . $e->getMessage();
+    Response::error(500, 'INTERNAL_ERROR', $message, ['file' => basename($e->getFile()), 'line' => $e->getLine()]);
 }
