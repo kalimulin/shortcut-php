@@ -1,0 +1,33 @@
+RewriteEngine On
+
+# Проброс заголовка Authorization в PHP-FPM / FastCGI (обязательно для shared-хостингов)
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+# 1. Запрет прямого доступа к скрытым файлам, .env, SQL-дампам и системным папкам кода
+RewriteRule (^|/)\. - [F,L]
+RewriteRule ^(src|config|database|tests|vendor)(/.*)?$ - [F,L]
+<FilesMatch "(^\.env|\.sql|\.log|\.md)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# 2. Короткие редиректы -> redirect.php
+RewriteRule ^s/([0-9A-Za-z_-]{1,64})/?$ redirect.php?code=$1 [L,QSA]
+RewriteRule ^s/?$ redirect.php?code= [L,QSA]
+
+# 3. Весь API -> api.php
+RewriteRule ^api(/.*)?$ api.php [L,QSA]
+
+# 4. Статические файлы фронта отдаём напрямую (JS, CSS, изображения и т.д.)
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# 5. Все остальные маршруты -> SPA фронтенд (index.html)
+RewriteRule ^ index.html [L]
