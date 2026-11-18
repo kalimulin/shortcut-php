@@ -9,6 +9,7 @@ use App\Http\ApiException;
 use App\Http\Request;
 use App\Http\Response;
 use App\Repositories\EmailVerificationRepository;
+use App\Repositories\PasswordResetRepository;
 use App\Repositories\UserRepository;
 use App\Services\BotProtectionService;
 use App\Services\DateHelper;
@@ -26,6 +27,7 @@ final class AuthController
         private readonly ?MailerService $mailer = null,
         private readonly ?BotProtectionService $botProtection = null,
         private readonly ?Config $config = null,
+        private readonly ?PasswordResetRepository $passwordResetRepo = null,
     ) {
     }
 
@@ -334,6 +336,167 @@ final class AuthController
         $this->userRepo->updatePassword($userId, $newHash, DateHelper::toMysqlUtc(DateHelper::nowUtc()));
 
         Response::json(['ok' => true]);
+    }
+
+    public function forgotPassword(Request $request): never
+    {
+        $body = $request->json();
+
+        if ($this->botProtection !== null) {
+            $this->botProtection->checkHoneypot($body);
+        }
+
+        $rawEmail = (string) ($body['email'] ?? $body['login'] ?? '');
+        $email = strtolower(trim($rawEmail));
+
+        if ($email === '' || mb_strlen($email) > 255 || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            throw ApiException::badRequest('VALIDATION_ERROR', 'Укажите корректный e-mail');
+        }
+
+        $user = $this->userRepo->findByLogin($email);
+        if ($user === null) {
+            // Для безопасности не раскрываем существование email
+            Response::json([
+                'ok' => true,
+                'message' => 'Если аккаунт с таким e-mail существует, проверочный код отправлен',
+            ]);
+        }
+
+        $userId = (string) $user['id'];
+
+        // Ограничение частоты повторной отправки (1 раз в 60 секунд)
+        if ($this->passwordResetRepo !== null) {
+            $latest = $this->passwordResetRepo->findLatestByEmail($email);
+            if ($latest !== null) {
+                $createdAt = DateHelper::parseUtc((string) $latest['created_at']);
+                if ($createdAt !== null) {
+                    $now = DateHelper::nowUtc();
+                    $diff = $now->getTimestamp() - $createdAt->getTimestamp();
+                    if ($diff < 60) {
+                        $wait = 60 - $diff;
+                        throw ApiException::tooManyRequests("Повторный код можно запросить через {$wait} сек.");
+                    }
+                }
+            }
+        }
+
+        $code = (string) random_int(100000, 999999);
+        $token = bin2hex(random_bytes(24));
+        $resetId = Uuid::v4();
+        $now = DateHelper::nowUtc();
+        $expiresAt = $now->modify('+30 minutes');
+
+        if ($this->passwordResetRepo !== null) {
+            $this->passwordResetRepo->create(
+                $resetId,
+                $userId,
+                $email,
+                $code,
+                $token,
+                DateHelper::toMysqlUtc($expiresAt),
+                DateHelper::toMysqlUtc($now)
+            );
+        }
+
+        if ($this->mailer !== null) {
+            try {
+                $this->mailer->sendPasswordResetEmail($email, $code, $token, $user['first_name'] ?? null);
+            } catch (\Throwable $e) {
+                error_log('[AuthController] Password reset email failure: ' . $e->getMessage());
+            }
+        }
+
+        $isDebug = $this->config !== null && method_exists($this->config, 'isDebug')
+            ? $this->config->isDebug()
+            : false;
+
+        Response::json([
+            'ok' => true,
+            'message' => 'Код для восстановления пароля отправлен на ваш e-mail',
+            'expiresInSeconds' => 1800,
+            ...($isDebug ? ['debugCode' => $code] : []),
+        ]);
+    }
+
+    public function resetPassword(Request $request): never
+    {
+        $body = $request->json();
+
+        if ($this->botProtection !== null) {
+            $this->botProtection->checkHoneypot($body);
+        }
+
+        $email = strtolower(trim((string) ($body['email'] ?? $body['login'] ?? '')));
+        $code = trim((string) ($body['code'] ?? ''));
+        $token = trim((string) ($body['token'] ?? ''));
+        $newPassword = (string) ($body['newPassword'] ?? $body['password'] ?? '');
+
+        if (mb_strlen($newPassword) < 6) {
+            throw ApiException::badRequest('VALIDATION_ERROR', 'Пароль должен содержать минимум 6 символов');
+        }
+
+        if ($this->passwordResetRepo === null) {
+            throw ApiException::internal('Модуль восстановления пароля недоступен');
+        }
+
+        $record = null;
+        if ($token !== '') {
+            $record = $this->passwordResetRepo->findByToken($token);
+        } elseif ($email !== '' && $code !== '') {
+            $record = $this->passwordResetRepo->findByEmailAndCode($email, $code);
+        } else {
+            throw ApiException::badRequest('VALIDATION_ERROR', 'Укажите e-mail и проверочный код');
+        }
+
+        if ($record === null) {
+            if ($email !== '') {
+                $latest = $this->passwordResetRepo->findLatestByEmail($email);
+                if ($latest !== null) {
+                    $this->passwordResetRepo->incrementAttempts((string) $latest['id']);
+                }
+            }
+            throw ApiException::badRequest('INVALID_CODE', 'Неверный или устаревший код восстановления');
+        }
+
+        if ((int) ($record['attempts'] ?? 0) >= 5) {
+            $this->passwordResetRepo->delete((string) $record['id']);
+            throw ApiException::badRequest('TOO_MANY_ATTEMPTS', 'Превышено количество попыток. Запросите код повторно.');
+        }
+
+        $expiresAt = DateHelper::parseUtc((string) $record['expires_at']);
+        $now = DateHelper::nowUtc();
+        if ($expiresAt === null || $now > $expiresAt) {
+            $this->passwordResetRepo->delete((string) $record['id']);
+            throw ApiException::badRequest('CODE_EXPIRED', 'Срок действия кода истёк. Запросите код повторно.');
+        }
+
+        $userId = (string) $record['user_id'];
+        $verifiedEmail = (string) $record['email'];
+        $nowMysql = DateHelper::toMysqlUtc($now);
+
+        // Обновляем пароль и верифицируем email (раз пользователь подтвердил владение почтой)
+        $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+        $this->userRepo->updatePassword($userId, $newHash, $nowMysql);
+        $this->userRepo->markVerified($userId, $nowMysql);
+        $this->passwordResetRepo->delete((string) $record['id']);
+
+        $user = $this->userRepo->findById($userId);
+        $role = is_array($user) ? (string) ($user['role'] ?? 'user') : 'user';
+        $authToken = $this->issueToken($userId, $verifiedEmail, $role);
+
+        Response::json([
+            'ok' => true,
+            'message' => 'Пароль успешно изменён',
+            'accessToken' => $authToken,
+            'user' => [
+                'userId' => $userId,
+                'login' => $verifiedEmail,
+                'role' => $role,
+                'isVerified' => true,
+                'firstName' => $user['first_name'] ?? null,
+                'lastName' => $user['last_name'] ?? null,
+            ],
+        ]);
     }
 
     private function issueToken(string $userId, string $login, string $role): string

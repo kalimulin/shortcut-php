@@ -24,6 +24,7 @@ use App\Repositories\BlacklistRepository;
 use App\Repositories\CampaignRepository;
 use App\Repositories\ClickRepository;
 use App\Repositories\EmailVerificationRepository;
+use App\Repositories\PasswordResetRepository;
 use App\Repositories\RateLimitRepository;
 use App\Repositories\ShortcutRepository;
 use App\Repositories\UserRepository;
@@ -57,6 +58,7 @@ try {
     $shortcutRepo = new ShortcutRepository($db);
     $clickRepo = new ClickRepository($db);
     $emailVerificationRepo = new EmailVerificationRepository($db);
+    $passwordResetRepo = new PasswordResetRepository($db);
 
     // Сервисы
     $jwt = new JwtService($config);
@@ -76,7 +78,7 @@ try {
 
     // Контроллеры
     $infoCtrl = new InfoController($config, $db);
-    $authCtrl = new AuthController($userRepo, $jwt, $emailVerificationRepo, $mailerService, $botProtection, $config);
+    $authCtrl = new AuthController($userRepo, $jwt, $emailVerificationRepo, $mailerService, $botProtection, $config, $passwordResetRepo);
     $profileCtrl = new ProfileController($userRepo);
     $publicCtrl = new PublicController($shortcutService, $urlCheckService, $qrSvgService);
     $shortcutCtrl = new ShortcutController($shortcutService);
@@ -98,6 +100,8 @@ try {
     $router->add('POST', '/auth/register', [$authCtrl, 'register'], $loginRl);
     $router->add('POST', '/auth/verify-email', [$authCtrl, 'verifyEmail']);
     $router->add('POST', '/auth/resend-verification', [$authCtrl, 'resendVerification'], $loginRl);
+    $router->add('POST', '/auth/forgot-password', [$authCtrl, 'forgotPassword'], $loginRl);
+    $router->add('POST', '/auth/reset-password', [$authCtrl, 'resetPassword'], $loginRl);
     $router->add('POST', '/auth/login', [$authCtrl, 'login'], $loginRl);
     $router->add('PATCH', '/auth/password', [$authCtrl, 'changePassword'], $requireAuth);
     $router->add('GET', '/profile', [$profileCtrl, 'get'], $requireAuth);
