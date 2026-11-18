@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS users (
     login         VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role          ENUM('user', 'admin') NOT NULL DEFAULT 'user',
+    is_verified   TINYINT(1)   NOT NULL DEFAULT 0,
+    verified_at   DATETIME     NULL,
     first_name    VARCHAR(120) NULL,
     last_name     VARCHAR(120) NULL,
     phone         VARCHAR(64)  NULL,
@@ -108,4 +110,20 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     hits          INT UNSIGNED NOT NULL DEFAULT 1,
     reset_at      INT UNSIGNED NOT NULL,
     INDEX idx_rate_limits_reset (reset_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 8. Верификация email пользователей
+CREATE TABLE IF NOT EXISTS email_verifications (
+    id         CHAR(36)     NOT NULL PRIMARY KEY,
+    user_id    CHAR(36)     NOT NULL,
+    email      VARCHAR(255) NOT NULL,
+    code       VARCHAR(16)  NOT NULL,
+    token      VARCHAR(64)  NOT NULL,
+    attempts   INT          NOT NULL DEFAULT 0,
+    expires_at DATETIME     NOT NULL,
+    created_at DATETIME     NOT NULL,
+    INDEX idx_email_verif_lookup (email, code),
+    INDEX idx_email_verif_token (token),
+    INDEX idx_email_verif_expires (expires_at),
+    CONSTRAINT fk_email_verif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

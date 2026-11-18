@@ -36,10 +36,11 @@ final class UserRepository
         string $passwordHash,
         string $role,
         string $nowMysql,
+        int $isVerified = 0,
     ): void {
         $stmt = $this->db->pdo()->prepare(
-            'INSERT INTO users (id, login, password_hash, role, contact_email, created_at, updated_at)
-             VALUES (:id, :login, :password_hash, :role, :contact_email, :created_at, :updated_at)'
+            'INSERT INTO users (id, login, password_hash, role, is_verified, contact_email, created_at, updated_at)
+             VALUES (:id, :login, :password_hash, :role, :is_verified, :contact_email, :created_at, :updated_at)'
         );
         $normalized = strtolower(trim($login));
         $stmt->execute([
@@ -47,9 +48,22 @@ final class UserRepository
             ':login' => $normalized,
             ':password_hash' => $passwordHash,
             ':role' => $role,
+            ':is_verified' => $isVerified,
             ':contact_email' => str_contains($normalized, '@') ? $normalized : null,
             ':created_at' => $nowMysql,
             ':updated_at' => $nowMysql,
+        ]);
+    }
+
+    public function markVerified(string $id, string $nowMysql): void
+    {
+        $stmt = $this->db->pdo()->prepare(
+            'UPDATE users SET is_verified = 1, verified_at = :verified_at, updated_at = :updated_at WHERE id = :id'
+        );
+        $stmt->execute([
+            ':verified_at' => $nowMysql,
+            ':updated_at' => $nowMysql,
+            ':id' => $id,
         ]);
     }
 

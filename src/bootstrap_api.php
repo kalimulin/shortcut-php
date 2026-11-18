@@ -23,11 +23,14 @@ use App\Middleware\RateLimitMiddleware;
 use App\Repositories\BlacklistRepository;
 use App\Repositories\CampaignRepository;
 use App\Repositories\ClickRepository;
+use App\Repositories\EmailVerificationRepository;
 use App\Repositories\RateLimitRepository;
 use App\Repositories\ShortcutRepository;
 use App\Repositories\UserRepository;
+use App\Services\BotProtectionService;
 use App\Services\CampaignService;
 use App\Services\JwtService;
+use App\Services\MailerService;
 use App\Services\QrSvgService;
 use App\Services\ShortcutService;
 use App\Services\StatsExportService;
@@ -53,6 +56,7 @@ try {
     $campaignRepo = new CampaignRepository($db);
     $shortcutRepo = new ShortcutRepository($db);
     $clickRepo = new ClickRepository($db);
+    $emailVerificationRepo = new EmailVerificationRepository($db);
 
     // Сервисы
     $jwt = new JwtService($config);
@@ -63,6 +67,8 @@ try {
     $statsService = new StatsService($config, $clickRepo);
     $statsExportService = new StatsExportService();
     $qrSvgService = new QrSvgService();
+    $mailerService = new MailerService($config);
+    $botProtection = new BotProtectionService($config);
 
     // Middleware
     $auth = new AuthMiddleware($jwt);
@@ -70,7 +76,7 @@ try {
 
     // Контроллеры
     $infoCtrl = new InfoController($config);
-    $authCtrl = new AuthController($userRepo, $jwt);
+    $authCtrl = new AuthController($userRepo, $jwt, $emailVerificationRepo, $mailerService, $botProtection, $config);
     $profileCtrl = new ProfileController($userRepo);
     $publicCtrl = new PublicController($shortcutService, $urlCheckService, $qrSvgService);
     $shortcutCtrl = new ShortcutController($shortcutService);
@@ -90,6 +96,8 @@ try {
 
     // Авторизация и профиль
     $router->add('POST', '/auth/register', [$authCtrl, 'register'], $loginRl);
+    $router->add('POST', '/auth/verify-email', [$authCtrl, 'verifyEmail']);
+    $router->add('POST', '/auth/resend-verification', [$authCtrl, 'resendVerification'], $loginRl);
     $router->add('POST', '/auth/login', [$authCtrl, 'login'], $loginRl);
     $router->add('PATCH', '/auth/password', [$authCtrl, 'changePassword'], $requireAuth);
     $router->add('GET', '/profile', [$profileCtrl, 'get'], $requireAuth);
