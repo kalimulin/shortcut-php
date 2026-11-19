@@ -10,12 +10,13 @@ use App\Services\DateHelper;
 
 final class RfRegistrySyncService
 {
-    public const DEFAULT_MIRROR = 'https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv';
+    public const DEFAULT_MIRROR = 'https://blockedin.org/api/v3/domains/';
 
     private const FALLBACK_MIRRORS = [
+        'https://blockedin.org/api/v3/domains/',
         'https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv',
-        'https://antifilter.download/list/domains.lst',
         'https://community.antifilter.download/list/domains.lst',
+        'https://antifilter.download/list/domains.lst',
     ];
 
     public function __construct(
@@ -107,6 +108,15 @@ final class RfRegistrySyncService
      */
     private function buildCandidateUrls(string $url): array
     {
+        $url = trim($url);
+
+        // Handle blockedin.org article or root URL -> resolve to API endpoint
+        if (str_contains($url, 'blockedin.org')) {
+            if (str_contains($url, '/article/api') || str_ends_with($url, '/api/') || $url === 'https://blockedin.org' || $url === 'https://blockedin.org/') {
+                $url = 'https://blockedin.org/api/v3/domains/';
+            }
+        }
+
         $urls = [$url];
 
         // If URL requested legacy /dump.csv, insert /dump-00.csv right after it
@@ -152,6 +162,7 @@ final class RfRegistrySyncService
         curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
         curl_setopt($ch, CURLOPT_USERAGENT, 'ShortcutSecurityChecker/1.0 (+https://омни.рус)');
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
 
         $success = curl_exec($ch);
         $statusCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -181,6 +192,10 @@ final class RfRegistrySyncService
 
     /**
      * Line-by-line stream parsing of the downloaded dump file.
+     * Supports:
+     *  - BlockedIn JSON array: ["domain1", "domain2", ...]
+     *  - zapret-info CSV: IP;domain;URL;decision;date;agency;num
+     *  - Plain domain/URL/IP list
      * @return list<array{type: string, value: string, comment: ?string, source: string, created_at: string}>
      */
     private function parseFile(string $filePath, int $maxEntries): array
@@ -212,7 +227,7 @@ final class RfRegistrySyncService
                 }
             }
 
-            // Check if line is CSV format (zapret-info: IP;domain;URL;decision;date;agency;num)
+            // 1. CSV format (zapret-info: IP;domain;URL;decision;date;agency;num)
             if (str_contains($line, ';')) {
                 $parts = explode(';', $line);
                 $ips = isset($parts[0]) ? trim($parts[0]) : '';
@@ -222,7 +237,7 @@ final class RfRegistrySyncService
 
                 if ($domains !== '') {
                     foreach (explode('|', $domains) as $d) {
-                        $d = strtolower(trim($d, " \t\n\r\0\x0B\"'"));
+                        $d = strtolower(trim($d, " \t\n\r\0\x0B\"'\\"));
                         if ($d !== '' && !isset($seen["d:{$d}"])) {
                             $seen["d:{$d}"] = true;
                             $entries[] = [
@@ -232,13 +247,16 @@ final class RfRegistrySyncService
                                 'source' => 'sync',
                                 'created_at' => $nowMysql,
                             ];
+                            if (count($entries) >= $maxEntries) {
+                                break 2;
+                            }
                         }
                     }
                 }
 
                 if ($urls !== '') {
                     foreach (explode('|', $urls) as $u) {
-                        $u = trim($u, " \t\n\r\0\x0B\"'");
+                        $u = trim($u, " \t\n\r\0\x0B\"'\\");
                         if ($u !== '' && !isset($seen["u:{$u}"])) {
                             $seen["u:{$u}"] = true;
                             $entries[] = [
@@ -248,13 +266,16 @@ final class RfRegistrySyncService
                                 'source' => 'sync',
                                 'created_at' => $nowMysql,
                             ];
+                            if (count($entries) >= $maxEntries) {
+                                break 2;
+                            }
                         }
                     }
                 }
 
                 if ($ips !== '') {
                     foreach (explode('|', $ips) as $ip) {
-                        $ip = trim($ip, " \t\n\r\0\x0B\"'");
+                        $ip = trim($ip, " \t\n\r\0\x0B\"'\\");
                         if ($ip !== '' && !isset($seen["i:{$ip}"])) {
                             $seen["i:{$ip}"] = true;
                             $entries[] = [
@@ -264,50 +285,79 @@ final class RfRegistrySyncService
                                 'source' => 'sync',
                                 'created_at' => $nowMysql,
                             ];
+                            if (count($entries) >= $maxEntries) {
+                                break 2;
+                            }
                         }
                     }
                 }
-            } else {
-                // Plain list of domains, URLs or IPs (e.g. antifilter domains.lst)
-                $item = trim($line, " \t\n\r\0\x0B\"'");
-                if ($item === '') {
-                    continue;
-                }
+                continue;
+            }
 
-                if (filter_var($item, FILTER_VALIDATE_IP) !== false) {
-                    if (!isset($seen["i:{$item}"])) {
-                        $seen["i:{$item}"] = true;
-                        $entries[] = [
-                            'type' => 'ip',
-                            'value' => $item,
-                            'comment' => null,
-                            'source' => 'sync',
-                            'created_at' => $nowMysql,
-                        ];
+            // 2. JSON array or comma-separated list (blockedin.org: ["domain1", "domain2", ...])
+            if (str_contains($line, ',') || str_starts_with($line, '[') || str_ends_with($line, ']')) {
+                $tokens = explode(',', $line);
+                foreach ($tokens as $token) {
+                    $clean = strtolower(trim($token, " \t\n\r\0\x0B\"'\\/[]"));
+                    if ($clean === '') {
+                        continue;
                     }
-                } elseif (str_starts_with($item, 'http://') || str_starts_with($item, 'https://')) {
-                    if (!isset($seen["u:{$item}"])) {
-                        $seen["u:{$item}"] = true;
-                        $entries[] = [
-                            'type' => 'url',
-                            'value' => $item,
-                            'comment' => null,
-                            'source' => 'sync',
-                            'created_at' => $nowMysql,
-                        ];
-                    }
-                } else {
-                    $domain = strtolower($item);
-                    if (!isset($seen["d:{$domain}"])) {
-                        $seen["d:{$domain}"] = true;
+                    if (str_contains($clean, '.') && !isset($seen["d:{$clean}"])) {
+                        $seen["d:{$clean}"] = true;
                         $entries[] = [
                             'type' => 'domain',
-                            'value' => $domain,
-                            'comment' => null,
+                            'value' => $clean,
+                            'comment' => 'blockedin',
                             'source' => 'sync',
                             'created_at' => $nowMysql,
                         ];
+                        if (count($entries) >= $maxEntries) {
+                            break 2;
+                        }
                     }
+                }
+                continue;
+            }
+
+            // 3. Plain list of domains, URLs or IPs (e.g. antifilter domains.lst)
+            $item = trim($line, " \t\n\r\0\x0B\"'\\");
+            if ($item === '') {
+                continue;
+            }
+
+            if (filter_var($item, FILTER_VALIDATE_IP) !== false) {
+                if (!isset($seen["i:{$item}"])) {
+                    $seen["i:{$item}"] = true;
+                    $entries[] = [
+                        'type' => 'ip',
+                        'value' => $item,
+                        'comment' => null,
+                        'source' => 'sync',
+                        'created_at' => $nowMysql,
+                    ];
+                }
+            } elseif (str_starts_with($item, 'http://') || str_starts_with($item, 'https://')) {
+                if (!isset($seen["u:{$item}"])) {
+                    $seen["u:{$item}"] = true;
+                    $entries[] = [
+                        'type' => 'url',
+                        'value' => $item,
+                        'comment' => null,
+                        'source' => 'sync',
+                        'created_at' => $nowMysql,
+                    ];
+                }
+            } else {
+                $domain = strtolower($item);
+                if (!isset($seen["d:{$domain}"])) {
+                    $seen["d:{$domain}"] = true;
+                    $entries[] = [
+                        'type' => 'domain',
+                        'value' => $domain,
+                        'comment' => null,
+                        'source' => 'sync',
+                        'created_at' => $nowMysql,
+                    ];
                 }
             }
         }
