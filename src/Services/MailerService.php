@@ -65,8 +65,15 @@ final class MailerService
                                 <a href="{$confirmUrl}" style="display: inline-block; background-color: #0056d6; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-size: 15px; font-weight: 600;">Подтвердить email</a>
                             </div>
 
+                            <!-- Предупреждение о сроке действия и автоудалении неподтверждённых аккаунтов -->
+                            <div style="background-color: #fff8e6; border-left: 4px solid #f59e0b; padding: 14px 18px; margin: 20px 0; border-radius: 6px;">
+                                <p style="margin: 0; font-size: 14px; line-height: 22px; color: #92400e;">
+                                    <strong>Внимание:</strong> пожалуйста, подтвердите ваш e-mail в течение 48 часов. Неподтверждённые профили пользователей автоматически удаляются через 48 часов после регистрации.
+                                </p>
+                            </div>
+
                             <p style="margin: 0 0 16px; font-size: 14px; line-height: 22px; color: #4a5568;">
-                                <strong>Ссылка действует 24 часа.</strong>
+                                <strong>Код и ссылка действуют 48 часов.</strong>
                             </p>
 
                             <p style="margin: 0 0 16px; font-size: 13px; line-height: 20px; color: #718096;">
@@ -100,7 +107,8 @@ HTML;
             . "Вы (или кто-то, указавший этот адрес) зарегистрировались в сервисе сокращения ссылок ОМНИ.РУС.\n\n"
             . "Ваш проверочный код: {$code}\n"
             . "Подтвердите email по ссылке: {$confirmUrl}\n\n"
-            . "Ссылка действует 24 часа.\n\n"
+            . "ВНИМАНИЕ: пожалуйста, подтвердите ваш e-mail в течение 48 часов. Неподтверждённые профили пользователей автоматически удаляются через 48 часов после регистрации.\n\n"
+            . "Код и ссылка действуют 48 часов.\n\n"
             . "Вы дали согласие на обработку персональных данных (Политика: https://омни.рус/privacy) и приняли Соглашение (https://омни.рус/terms).\n\n"
             . "Если это были не вы — просто проигнорируйте письмо, аккаунт не активируется.\n\n"
             . "— Администрация омни.рус\n"

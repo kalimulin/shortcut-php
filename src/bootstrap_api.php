@@ -7,6 +7,7 @@ require_once __DIR__ . '/autoload.php';
 use App\Config;
 use App\Controllers\AuthController;
 use App\Controllers\CampaignController;
+use App\Controllers\CronController;
 use App\Controllers\FeedbackController;
 use App\Controllers\InfoController;
 use App\Controllers\ProfileController;
@@ -31,6 +32,7 @@ use App\Repositories\ShortcutRepository;
 use App\Repositories\UserRepository;
 use App\Services\BotProtectionService;
 use App\Services\CampaignService;
+use App\Services\CleanupService;
 use App\Services\JwtService;
 use App\Services\MailerService;
 use App\Services\QrSvgService;
@@ -87,6 +89,8 @@ try {
     $statsCtrl = new StatsController($statsService, $statsExportService, $shortcutService, $campaignService);
     $urlCheckCtrl = new UrlCheckController($urlCheckService);
     $feedbackCtrl = new FeedbackController($mailerService, $botProtection, $config);
+    $cleanupService = new CleanupService($db, $config, $shortcutRepo, $userRepo);
+    $cronCtrl = new CronController($cleanupService, $config, $jwt, $userRepo);
 
     $requireAuth = [$auth->requireAuth()];
     $requireAdmin = [$auth->requireAdmin()];
@@ -96,8 +100,10 @@ try {
 
     $router = new Router();
 
-    // Служебные
+    // Служебные и cron
     $router->add('GET', '/info', [$infoCtrl, 'info']);
+    $router->add('POST', '/cron/cleanup', [$cronCtrl, 'cleanup']);
+    $router->add('GET', '/cron/cleanup', [$cronCtrl, 'cleanup']);
 
     // Авторизация и профиль
     $router->add('POST', '/auth/register', [$authCtrl, 'register'], $loginRl);

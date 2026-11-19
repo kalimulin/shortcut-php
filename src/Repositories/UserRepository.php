@@ -137,4 +137,94 @@ final class UserRepository
         $stmt = $pdo->prepare('DELETE FROM users WHERE id = :uid');
         $stmt->execute([':uid' => $userId]);
     }
+
+    /**
+     * Поиск и удаление партии неподтверждённых пользователей старше порога (например, 48 часов после регистрации).
+     * Удаляет пользователя и все связанные с ним данные: ссылки, клики, кампании, токены.
+     *
+     * @return array{deletedUsers: int, deletedShortcuts: int, deletedClicks: int}
+     */
+    public function cleanupUnverified(string $thresholdMysql, int $limit = 100): array
+    {
+        $pdo = $this->db->pdo();
+
+        $sql = "SELECT id FROM users
+                WHERE is_verified = 0 AND created_at <= :threshold
+                LIMIT :limit";
+        $stmt = $pdo->prepare($sql);
+        $stmt->bindValue(':threshold', $thresholdMysql);
+        $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
+        $stmt->execute();
+
+        /** @var list<string> $userIds */
+        $userIds = $stmt->fetchAll(\PDO::FETCH_COLUMN);
+        if (empty($userIds)) {
+            return ['deletedUsers' => 0, 'deletedShortcuts' => 0, 'deletedClicks' => 0];
+        }
+
+        $userPlaceholders = implode(',', array_fill(0, count($userIds), '?'));
+
+        $pdo->beginTransaction();
+        try {
+            // 1. Находим ссылки этих пользователей, чтобы удалить их и связанные клики (не допуская превращения в анонимные из-за ON DELETE SET NULL)
+            $findShortcuts = $pdo->prepare("SELECT id FROM shortcuts WHERE user_id IN ({$userPlaceholders})");
+            $findShortcuts->execute($userIds);
+            /** @var list<string> $shortcutIds */
+            $shortcutIds = $findShortcuts->fetchAll(\PDO::FETCH_COLUMN);
+
+            $deletedShortcuts = 0;
+            $deletedClicks = 0;
+
+            if (!empty($shortcutIds)) {
+                $scPlaceholders = implode(',', array_fill(0, count($shortcutIds), '?'));
+
+                $delClicks = $pdo->prepare("DELETE FROM click_events WHERE shortcut_id IN ({$scPlaceholders})");
+                $delClicks->execute($shortcutIds);
+                $deletedClicks += $delClicks->rowCount();
+
+                $delTags = $pdo->prepare("DELETE FROM shortcut_tags WHERE shortcut_id IN ({$scPlaceholders})");
+                $delTags->execute($shortcutIds);
+
+                $delShortcuts = $pdo->prepare("DELETE FROM shortcuts WHERE id IN ({$scPlaceholders})");
+                $delShortcuts->execute($shortcutIds);
+                $deletedShortcuts = $delShortcuts->rowCount();
+            }
+
+            // 2. Клики, где user_id указан напрямую
+            $delUserClicks = $pdo->prepare("DELETE FROM click_events WHERE user_id IN ({$userPlaceholders})");
+            $delUserClicks->execute($userIds);
+            $deletedClicks += $delUserClicks->rowCount();
+
+            // 3. Кампании, верификации и сбросы паролей имеют ON DELETE CASCADE в схеме MySQL,
+            // но для гарантированной очистки на любых конфигурациях СУБД выполним явный DELETE:
+            $pdo->prepare("DELETE FROM email_verifications WHERE user_id IN ({$userPlaceholders})")->execute($userIds);
+            $pdo->prepare("DELETE FROM password_resets WHERE user_id IN ({$userPlaceholders})")->execute($userIds);
+            $pdo->prepare("DELETE FROM campaigns WHERE user_id IN ({$userPlaceholders})")->execute($userIds);
+
+            // 4. Удаляем самих пользователей
+            $delUsers = $pdo->prepare("DELETE FROM users WHERE id IN ({$userPlaceholders})");
+            $delUsers->execute($userIds);
+            $deletedUsers = $delUsers->rowCount();
+
+            $pdo->commit();
+            return [
+                'deletedUsers' => $deletedUsers,
+                'deletedShortcuts' => $deletedShortcuts,
+                'deletedClicks' => $deletedClicks,
+            ];
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * Подсчёт количества неподтверждённых пользователей старше указанного порога.
+     */
+    public function countUnverifiedOlderThan(string $thresholdMysql): int
+    {
+        $stmt = $this->db->pdo()->prepare("SELECT COUNT(*) FROM users WHERE is_verified = 0 AND created_at <= :threshold");
+        $stmt->execute([':threshold' => $thresholdMysql]);
+        return (int) $stmt->fetchColumn();
+    }
 }

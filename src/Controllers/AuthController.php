@@ -101,7 +101,8 @@ final class AuthController
         $code = (string) random_int(100000, 999999);
         $token = bin2hex(random_bytes(24));
         $verifId = Uuid::v4();
-        $expiresAt = $now->modify('+24 hours');
+        $verifTtlHours = $this->config !== null ? $this->config->getInt('EMAIL_VERIFICATION_TTL_HOURS', 48) : 48;
+        $expiresAt = $now->modify("+{$verifTtlHours} hours");
         $expiresAtMysql = DateHelper::toMysqlUtc($expiresAt);
 
         if ($this->verificationRepo !== null) {
@@ -235,7 +236,8 @@ final class AuthController
         $token = bin2hex(random_bytes(24));
         $verifId = Uuid::v4();
         $now = DateHelper::nowUtc();
-        $expiresAt = $now->modify('+24 hours');
+        $verifTtlHours = $this->config !== null ? $this->config->getInt('EMAIL_VERIFICATION_TTL_HOURS', 48) : 48;
+        $expiresAt = $now->modify("+{$verifTtlHours} hours");
 
         if ($this->verificationRepo !== null) {
             $this->verificationRepo->create(

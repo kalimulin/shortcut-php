@@ -407,4 +407,74 @@ final class ShortcutRepository
             $ins->execute([':id' => $shortcutId, ':tag' => $tag]);
         }
     }
+
+    /**
+     * Поиск и удаление партии просроченных анонимных (гостевых) ссылок.
+     * Анонимной считается ссылка с user_id IS NULL или source = 'public'.
+     * Ссылка подлежит удалению, если она создана раньше порога (например, 48 часов назад)
+     * либо её срок expires_at уже истёк.
+     *
+     * @return array{deletedShortcuts: int, deletedClicks: int}
+     */
+    public function cleanupExpiredAnonymous(string $thresholdMysql, string $nowMysql, int $limit = 200): array
+    {
+        $pdo = $this->db->pdo();
+
+        $sql = "SELECT id FROM shortcuts
+                WHERE (user_id IS NULL OR source = 'public')
+                  AND (created_at <= :threshold OR (expires_at IS NOT NULL AND expires_at <= :now))
+                LIMIT :limit";
+        $stmt = $pdo->prepare($sql);
+        $stmt->bindValue(':threshold', $thresholdMysql);
+        $stmt->bindValue(':now', $nowMysql);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        /** @var list<string> $ids */
+        $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        if (empty($ids)) {
+            return ['deletedShortcuts' => 0, 'deletedClicks' => 0];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        $pdo->beginTransaction();
+        try {
+            // Удаляем связанные переходы (клики)
+            $delClicks = $pdo->prepare("DELETE FROM click_events WHERE shortcut_id IN ({$placeholders})");
+            $delClicks->execute($ids);
+            $deletedClicks = $delClicks->rowCount();
+
+            // Удаляем теги
+            $delTags = $pdo->prepare("DELETE FROM shortcut_tags WHERE shortcut_id IN ({$placeholders})");
+            $delTags->execute($ids);
+
+            // Удаляем сами ссылки
+            $delShortcuts = $pdo->prepare("DELETE FROM shortcuts WHERE id IN ({$placeholders})");
+            $delShortcuts->execute($ids);
+            $deletedShortcuts = $delShortcuts->rowCount();
+
+            $pdo->commit();
+            return [
+                'deletedShortcuts' => $deletedShortcuts,
+                'deletedClicks' => $deletedClicks,
+            ];
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * Подсчёт количества анонимных ссылок, подлежащих удалению.
+     */
+    public function countExpiredAnonymous(string $thresholdMysql, string $nowMysql): int
+    {
+        $sql = "SELECT COUNT(*) FROM shortcuts
+                WHERE (user_id IS NULL OR source = 'public')
+                  AND (created_at <= :threshold OR (expires_at IS NOT NULL AND expires_at <= :now))";
+        $stmt = $this->db->pdo()->prepare($sql);
+        $stmt->execute([':threshold' => $thresholdMysql, ':now' => $nowMysql]);
+        return (int) $stmt->fetchColumn();
+    }
 }
