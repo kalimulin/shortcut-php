@@ -73,6 +73,25 @@ final class ProfileController
         Response::json($this->serializeProfile($updated));
     }
 
+    public function delete(Request $request): never
+    {
+        $userId = (string) $request->getAttribute('userId');
+        $user = $this->userRepo->findById($userId);
+        if ($user === null) {
+            throw ApiException::notFound('USER_NOT_FOUND', 'Пользователь не найден');
+        }
+
+        $body = $request->json();
+        $keepShortcuts = !empty($body['keepShortcuts']);
+
+        $this->userRepo->deleteAccount($userId, $keepShortcuts, DateHelper::toMysqlUtc(DateHelper::nowUtc()));
+
+        Response::json([
+            'status' => 'success',
+            'message' => 'Учетная запись успешно удалена, обработка персональных данных прекращена'
+        ]);
+    }
+
     /**
      * @param array<string, mixed> $user
      * @return array<string, mixed>

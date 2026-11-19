@@ -19,10 +19,9 @@ final class MailerService
     public function sendVerificationEmail(string $toEmail, string $code, string $token): bool
     {
         $appUrl = rtrim($this->config->appUrl(), '/');
-        $appName = $this->config->get('MAIL_FROM_NAME', 'Омни Ссылки');
         $confirmUrl = "{$appUrl}/login?verifyEmail=" . rawurlencode($toEmail) . '&code=' . rawurlencode($code);
 
-        $subject = "Код подтверждения регистрации: {$code}";
+        $subject = 'Подтверждение регистрации на омни.рус';
 
         $htmlBody = <<<HTML
 <!DOCTYPE html>
@@ -36,44 +35,57 @@ final class MailerService
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f4f6f9; padding: 40px 16px;">
         <tr>
             <td align="center">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 540px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); overflow: hidden;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); overflow: hidden;">
                     <!-- Шапка -->
                     <tr>
                         <td style="padding: 32px 36px 20px; text-align: center; border-bottom: 1px solid #edf2f7;">
-                            <h2 style="margin: 0; font-size: 24px; font-weight: 700; color: #0056d6;">{$appName}</h2>
+                            <h2 style="margin: 0; font-size: 24px; font-weight: 700; color: #0056d6;">ОМНИ.РУС</h2>
                         </td>
                     </tr>
                     <!-- Основной контент -->
                     <tr>
                         <td style="padding: 32px 36px;">
-                            <h1 style="margin: 0 0 16px; font-size: 20px; font-weight: 600; color: #12233f;">Подтверждение регистрации</h1>
+                            <h1 style="margin: 0 0 16px; font-size: 20px; font-weight: 600; color: #12233f;">Здравствуйте!</h1>
                             <p style="margin: 0 0 20px; font-size: 15px; line-height: 24px; color: #4a5568;">
-                                Здравствуйте! Вы указали этот адрес для создания аккаунта на сервисе коротких ссылок. Для защиты от ботов и активации аккаунта введите 6-значный проверочный код:
+                                Вы (или кто-то, указавший этот адрес) зарегистрировались в сервисе сокращения ссылок ОМНИ.РУС.
                             </p>
                             
                             <!-- Блок с кодом -->
-                            <div style="background-color: #f0f4f8; border-radius: 8px; padding: 20px; text-align: center; margin: 28px 0;">
+                            <div style="background-color: #f0f4f8; border-radius: 8px; padding: 20px; text-align: center; margin: 24px 0;">
+                                <div style="font-size: 13px; color: #718096; margin-bottom: 8px;">Ваш проверочный код:</div>
                                 <span style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #0056d6; font-family: Consolas, monospace; display: inline-block;">{$code}</span>
                             </div>
 
                             <p style="margin: 0 0 24px; font-size: 14px; line-height: 22px; color: #718096; text-align: center;">
-                                Или нажмите кнопку ниже, чтобы подтвердить email в один клик:
+                                Или нажмите кнопку ниже для подтверждения email:
                             </p>
 
                             <!-- Кнопка перехода -->
-                            <div style="text-align: center; margin-bottom: 28px;">
+                            <div style="text-align: center; margin-bottom: 24px;">
                                 <a href="{$confirmUrl}" style="display: inline-block; background-color: #0056d6; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-size: 15px; font-weight: 600;">Подтвердить email</a>
                             </div>
 
-                            <p style="margin: 0; font-size: 13px; line-height: 20px; color: #a0aec0;">
-                                Код и ссылка действительны в течение 15 минут. Если вы не регистрировались на сайте {$appName}, просто проигнорируйте это письмо.
+                            <p style="margin: 0 0 16px; font-size: 14px; line-height: 22px; color: #4a5568;">
+                                <strong>Ссылка действует 24 часа.</strong>
+                            </p>
+
+                            <p style="margin: 0 0 16px; font-size: 13px; line-height: 20px; color: #718096;">
+                                Вы дали согласие на обработку персональных данных (Политика: <a href="https://омни.рус/privacy" style="color: #0056d6; text-decoration: underline;">https://омни.рус/privacy</a>) и приняли Соглашение (<a href="https://омни.рус/terms" style="color: #0056d6; text-decoration: underline;">https://омни.рус/terms</a>).
+                            </p>
+
+                            <p style="margin: 0 0 20px; font-size: 13px; line-height: 20px; color: #a0aec0;">
+                                Если это были не вы — просто проигнорируйте письмо, аккаунт не активируется.
+                            </p>
+
+                            <p style="margin: 0; font-size: 14px; color: #12233f; font-weight: 500;">
+                                — Администрация омни.рус
                             </p>
                         </td>
                     </tr>
                     <!-- Подвал -->
                     <tr>
-                        <td style="padding: 20px 36px; background-color: #fafbfc; border-top: 1px solid #edf2f7; text-align: center; font-size: 12px; color: #a0aec0;">
-                            &copy; {$appName} — сервис сокращения ссылок и аналитики переходов
+                        <td style="padding: 16px 36px; background-color: #fafbfc; border-top: 1px solid #edf2f7; text-align: center; font-size: 12px; color: #a0aec0;">
+                            Отписаться от новостей: <a href="{$appUrl}/profile" style="color: #718096; text-decoration: underline;">настройки в Личном кабинете</a> (подтверждение email — не рассылка)
                         </td>
                     </tr>
                 </table>
@@ -85,9 +97,14 @@ final class MailerService
 HTML;
 
         $textBody = "Здравствуйте!\n\n"
-            . "Ваш проверочный код для регистрации в {$appName}: {$code}\n\n"
-            . "Или перейдите по ссылке для подтверждения:\n{$confirmUrl}\n\n"
-            . "Код действителен 30 минут.\n";
+            . "Вы (или кто-то, указавший этот адрес) зарегистрировались в сервисе сокращения ссылок ОМНИ.РУС.\n\n"
+            . "Ваш проверочный код: {$code}\n"
+            . "Подтвердите email по ссылке: {$confirmUrl}\n\n"
+            . "Ссылка действует 24 часа.\n\n"
+            . "Вы дали согласие на обработку персональных данных (Политика: https://омни.рус/privacy) и приняли Соглашение (https://омни.рус/terms).\n\n"
+            . "Если это были не вы — просто проигнорируйте письмо, аккаунт не активируется.\n\n"
+            . "— Администрация омни.рус\n"
+            . "Отписаться от новостей: {$appUrl}/profile (подтверждение email — не рассылка)\n";
 
         return $this->send($toEmail, $subject, $htmlBody, $textBody);
     }

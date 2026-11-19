@@ -106,6 +106,7 @@ try {
     $router->add('PATCH', '/auth/password', [$authCtrl, 'changePassword'], $requireAuth);
     $router->add('GET', '/profile', [$profileCtrl, 'get'], $requireAuth);
     $router->add('PATCH', '/profile', [$profileCtrl, 'update'], $requireAuth);
+    $router->add('DELETE', '/profile', [$profileCtrl, 'delete'], $requireAuth);
 
     // Публичные ручки (гостевые ссылки, проверка URL, QR)
     $router->add('POST', '/public/shortcuts', [$publicCtrl, 'createShortcut'], $publicShortcutRl);

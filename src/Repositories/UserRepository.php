@@ -121,4 +121,20 @@ final class UserRepository
         $sql = 'UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id';
         $this->db->pdo()->prepare($sql)->execute($params);
     }
+
+    public function deleteAccount(string $userId, bool $keepShortcuts = false, ?string $nowMysql = null): void
+    {
+        $pdo = $this->db->pdo();
+        $now = $nowMysql ?? date('Y-m-d H:i:s');
+
+        if (!$keepShortcuts) {
+            // Короткие ссылки по умолчанию перестают работать
+            $stmt = $pdo->prepare('UPDATE shortcuts SET is_deleted = 1, updated_at = :now WHERE user_id = :uid');
+            $stmt->execute([':now' => $now, ':uid' => $userId]);
+        }
+
+        // Удаляем пользователя (связанные кампании, верификации и сбросы паролей удалятся по каскаду)
+        $stmt = $pdo->prepare('DELETE FROM users WHERE id = :uid');
+        $stmt->execute([':uid' => $userId]);
+    }
 }

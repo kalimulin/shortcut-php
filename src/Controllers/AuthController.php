@@ -101,7 +101,7 @@ final class AuthController
         $code = (string) random_int(100000, 999999);
         $token = bin2hex(random_bytes(24));
         $verifId = Uuid::v4();
-        $expiresAt = $now->modify('+30 minutes');
+        $expiresAt = $now->modify('+24 hours');
         $expiresAtMysql = DateHelper::toMysqlUtc($expiresAt);
 
         if ($this->verificationRepo !== null) {
@@ -235,7 +235,7 @@ final class AuthController
         $token = bin2hex(random_bytes(24));
         $verifId = Uuid::v4();
         $now = DateHelper::nowUtc();
-        $expiresAt = $now->modify('+30 minutes');
+        $expiresAt = $now->modify('+24 hours');
 
         if ($this->verificationRepo !== null) {
             $this->verificationRepo->create(
