@@ -15,6 +15,7 @@ use App\Controllers\PublicController;
 use App\Controllers\ShortcutController;
 use App\Controllers\StatsController;
 use App\Controllers\UrlCheckController;
+use App\Controllers\WhitelistController;
 use App\Database;
 use App\Http\ApiException;
 use App\Http\Request;
@@ -28,8 +29,11 @@ use App\Repositories\ClickRepository;
 use App\Repositories\EmailVerificationRepository;
 use App\Repositories\PasswordResetRepository;
 use App\Repositories\RateLimitRepository;
+use App\Repositories\RfRegistryRepository;
 use App\Repositories\ShortcutRepository;
+use App\Repositories\UrlCheckCacheRepository;
 use App\Repositories\UserRepository;
+use App\Repositories\WhitelistRepository;
 use App\Services\BotProtectionService;
 use App\Services\CampaignService;
 use App\Services\CleanupService;
@@ -40,6 +44,11 @@ use App\Services\ShortcutService;
 use App\Services\StatsExportService;
 use App\Services\StatsService;
 use App\Services\UrlCheckService;
+use App\Services\UrlSecurity\Providers\GoogleSafeBrowsingProvider;
+use App\Services\UrlSecurity\Providers\UrlhausProvider;
+use App\Services\UrlSecurity\Providers\VirusTotalProvider;
+use App\Services\UrlSecurity\RfRegistrySyncService;
+use App\Services\UrlSecurity\UrlSecurityManager;
 use App\Services\UrlTools;
 
 $config = new Config();
@@ -56,6 +65,9 @@ try {
     // Репозитории
     $userRepo = new UserRepository($db);
     $blacklistRepo = new BlacklistRepository($db);
+    $whitelistRepo = new WhitelistRepository($db);
+    $rfRegistryRepo = new RfRegistryRepository($db);
+    $cacheRepo = new UrlCheckCacheRepository($db);
     $rateLimitRepo = new RateLimitRepository($db);
     $campaignRepo = new CampaignRepository($db);
     $shortcutRepo = new ShortcutRepository($db);
@@ -66,7 +78,23 @@ try {
     // Сервисы
     $jwt = new JwtService($config);
     $urlTools = new UrlTools($config);
-    $urlCheckService = new UrlCheckService($config, $urlTools, $blacklistRepo);
+
+    // Модульный менеджер безопасности ссылок
+    $securityManager = new UrlSecurityManager(
+        $config,
+        $urlTools,
+        $blacklistRepo,
+        $whitelistRepo,
+        $rfRegistryRepo,
+        $cacheRepo
+    );
+    $securityManager->addProvider(new GoogleSafeBrowsingProvider($config));
+    $securityManager->addProvider(new VirusTotalProvider($config));
+    $securityManager->addProvider(new UrlhausProvider($config));
+
+    $rfSyncService = new RfRegistrySyncService($config, $rfRegistryRepo);
+
+    $urlCheckService = new UrlCheckService($config, $urlTools, $blacklistRepo, $securityManager);
     $shortcutService = new ShortcutService($config, $urlTools, $urlCheckService, $shortcutRepo, $campaignRepo);
     $campaignService = new CampaignService($campaignRepo);
     $statsService = new StatsService($config, $clickRepo);
@@ -87,7 +115,8 @@ try {
     $shortcutCtrl = new ShortcutController($shortcutService);
     $campaignCtrl = new CampaignController($campaignService, $shortcutService);
     $statsCtrl = new StatsController($statsService, $statsExportService, $shortcutService, $campaignService);
-    $urlCheckCtrl = new UrlCheckController($urlCheckService);
+    $urlCheckCtrl = new UrlCheckController($urlCheckService, $rfRegistryRepo, $rfSyncService);
+    $whitelistCtrl = new WhitelistController($whitelistRepo);
     $feedbackCtrl = new FeedbackController($mailerService, $botProtection, $config);
     $cleanupService = new CleanupService($db, $config, $shortcutRepo, $userRepo);
     $cronCtrl = new CronController($cleanupService, $config, $jwt, $userRepo);
@@ -157,6 +186,18 @@ try {
     $router->add('GET', '/blacklist', [$urlCheckCtrl, 'listBlacklist'], $requireAuth);
     $router->add('POST', '/blacklist', [$urlCheckCtrl, 'addBlacklist'], $requireAdmin);
     $router->add('DELETE', '/blacklist/{id}', [$urlCheckCtrl, 'deleteBlacklist'], $requireAdmin);
+
+    // Белый список (whitelist)
+    $router->add('GET', '/whitelist', [$whitelistCtrl, 'list'], $requireAuth);
+    $router->add('POST', '/whitelist', [$whitelistCtrl, 'add'], $requireAdmin);
+    $router->add('DELETE', '/whitelist/{id}', [$whitelistCtrl, 'delete'], $requireAdmin);
+
+    // Реестр запрещённых ресурсов РФ (rf-banned)
+    $router->add('GET', '/rf-banned', [$urlCheckCtrl, 'listRfBanned'], $requireAuth);
+    $router->add('GET', '/rf-banned/stats', [$urlCheckCtrl, 'getRfStats'], $requireAuth);
+    $router->add('POST', '/rf-banned', [$urlCheckCtrl, 'addRfBanned'], $requireAdmin);
+    $router->add('DELETE', '/rf-banned/{id}', [$urlCheckCtrl, 'deleteRfBanned'], $requireAdmin);
+    $router->add('POST', '/rf-banned/sync', [$urlCheckCtrl, 'syncRfRegistry'], $requireAdmin);
 
     $router->dispatch($request);
 } catch (ApiException $e) {

@@ -9,8 +9,12 @@ use App\Controllers\RedirectController;
 use App\Database;
 use App\Repositories\BlacklistRepository;
 use App\Repositories\ClickRepository;
+use App\Repositories\RfRegistryRepository;
 use App\Repositories\ShortcutRepository;
+use App\Repositories\UrlCheckCacheRepository;
+use App\Repositories\WhitelistRepository;
 use App\Services\UrlCheckService;
+use App\Services\UrlSecurity\UrlSecurityManager;
 use App\Services\UrlTools;
 
 $config = new Config();
@@ -20,8 +24,21 @@ try {
     $shortcutRepo = new ShortcutRepository($db);
     $clickRepo = new ClickRepository($db);
     $blacklistRepo = new BlacklistRepository($db);
+    $whitelistRepo = new WhitelistRepository($db);
+    $rfRepo = new RfRegistryRepository($db);
+    $cacheRepo = new UrlCheckCacheRepository($db);
     $urlTools = new UrlTools($config);
-    $urlCheckService = new UrlCheckService($config, $urlTools, $blacklistRepo);
+
+    $securityManager = new UrlSecurityManager(
+        $config,
+        $urlTools,
+        $blacklistRepo,
+        $whitelistRepo,
+        $rfRepo,
+        $cacheRepo
+    );
+
+    $urlCheckService = new UrlCheckService($config, $urlTools, $blacklistRepo, $securityManager);
 
     $code = '';
     if (isset($_GET['code']) && is_string($_GET['code'])) {

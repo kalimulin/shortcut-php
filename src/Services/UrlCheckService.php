@@ -7,10 +7,11 @@ namespace App\Services;
 use App\Config;
 use App\Http\ApiException;
 use App\Repositories\BlacklistRepository;
+use App\Services\UrlSecurity\UrlSecurityManager;
 
 final class UrlCheckService
 {
-    public const CHECKED_BY = 'Система безопасности омни.рус';
+    public const CHECKED_BY = 'Комплексная система безопасности омни.рус';
     public const MSG_INVALID = 'Некорректный URL. Проверьте формат URL.';
     public const MSG_BLOCKED = 'Ссылка заблокирована. Перенаправление на данный ресурс запрещено соображениями безопасности.';
 
@@ -23,20 +24,32 @@ final class UrlCheckService
         private readonly Config $config,
         private readonly UrlTools $urlTools,
         private readonly BlacklistRepository $blacklistRepo,
+        private readonly ?UrlSecurityManager $securityManager = null,
     ) {
     }
 
-    /** @return array<string, mixed> */
-    public function check(string $url): array
+    public function getSecurityManager(): ?UrlSecurityManager
     {
+        return $this->securityManager;
+    }
+
+    /** @return array<string, mixed> */
+    public function check(string $url, bool $fastPathOnly = false): array
+    {
+        if ($this->securityManager !== null) {
+            return $this->securityManager->check($url, $fastPathOnly);
+        }
         $blacklist = $this->blacklistRepo->getDomainReasonMap();
         return $this->evaluateUrl($url, $blacklist);
     }
 
     /** @return array<string, mixed> */
-    public function ensureAllowed(string $url): array
+    public function ensureAllowed(string $url, bool $fastPathOnly = false): array
     {
-        $result = $this->check($url);
+        if ($this->securityManager !== null) {
+            return $this->securityManager->ensureAllowed($url, $fastPathOnly);
+        }
+        $result = $this->check($url, $fastPathOnly);
         if (!empty($result['isInvalid'])) {
             throw ApiException::badRequest('SHORTCUT_URL_INVALID', self::MSG_INVALID);
         }

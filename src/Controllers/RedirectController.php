@@ -52,7 +52,7 @@ final class RedirectController
         if ($status === 'inactive') {
             $reserve = trim((string) ($row['reserve_url'] ?? ''));
             if ($reserve !== '') {
-                $reserveCheck = $this->urlCheckService->check($reserve);
+                $reserveCheck = $this->urlCheckService->check($reserve, true);
                 if (empty($reserveCheck['isBlocked']) && empty($reserveCheck['isInvalid'])) {
                     $destination = $reserve;
                 }
@@ -62,7 +62,7 @@ final class RedirectController
             }
         } else {
             $target = (string) $row['target'];
-            $check = $this->urlCheckService->check($target);
+            $check = $this->urlCheckService->check($target, true);
             if (!empty($check['isBlocked']) || !empty($check['isInvalid'])) {
                 $this->redirect303('/links/errors/blocked');
             }
