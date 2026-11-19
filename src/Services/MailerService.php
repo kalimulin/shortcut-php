@@ -190,9 +190,130 @@ HTML;
     }
 
     /**
+     * Отправка обращения из формы обратной связи в службу поддержки.
+     */
+    public function sendFeedbackEmail(
+        string $category,
+        string $senderEmail,
+        ?string $senderName,
+        ?string $userSubject,
+        string $message
+    ): bool {
+        $categories = [
+            'question' => 'Вопрос',
+            'suggestion' => 'Предложение',
+            'complaint' => 'Жалоба',
+        ];
+        $categoryLabel = $categories[$category] ?? 'Обращение';
+
+        $safeSubject = $userSubject !== null && trim($userSubject) !== ''
+            ? trim($userSubject)
+            : "{$categoryLabel} от пользователя";
+
+        $appName = $this->config->get('MAIL_FROM_NAME', 'Омни Ссылки');
+        $subject = "[Обратная связь / {$categoryLabel}] {$safeSubject}";
+
+        $toEmail = $this->config->get('MAIL_SUPPORT_ADDRESS', '');
+        if ($toEmail === '') {
+            $toEmail = $this->config->get('SUPPORT_EMAIL', '');
+        }
+        if ($toEmail === '') {
+            $host = $this->config->shortBaseHost() ?: 'омни.рус';
+            $toEmail = "support@{$host}";
+        }
+
+        $appUrl = rtrim($this->config->appUrl(), '/');
+        $escapedCategory = htmlspecialchars($categoryLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $escapedName = htmlspecialchars($senderName ?: 'Не указано', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $escapedEmail = htmlspecialchars($senderEmail, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $escapedSubject = htmlspecialchars($safeSubject, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $escapedMessage = nl2br(htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+        $dateStr = date('d.m.Y H:i:s (T)');
+
+        $htmlBody = <<<HTML
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{$subject}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f6f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #12233f;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f4f6f9; padding: 40px 16px;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 580px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); overflow: hidden;">
+                    <!-- Шапка -->
+                    <tr>
+                        <td style="padding: 28px 36px 20px; text-align: center; border-bottom: 1px solid #edf2f7;">
+                            <h2 style="margin: 0; font-size: 22px; font-weight: 700; color: #0056d6;">{$appName}</h2>
+                            <p style="margin: 6px 0 0; font-size: 13px; color: #718096;">Новое обращение из формы обратной связи</p>
+                        </td>
+                    </tr>
+                    <!-- Основной контент -->
+                    <tr>
+                        <td style="padding: 28px 36px;">
+                            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px;">
+                                <table role="presentation" width="100%" cellspacing="0" cellpadding="4" border="0" style="font-size: 14px; color: #4a5568;">
+                                    <tr>
+                                        <td style="font-weight: 600; width: 110px; color: #718096;">Тип:</td>
+                                        <td><span style="display: inline-block; background-color: #ebf8ff; color: #0056d6; font-weight: 600; padding: 2px 10px; border-radius: 12px; font-size: 13px;">{$escapedCategory}</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600; color: #718096;">От кого:</td>
+                                        <td><strong>{$escapedName}</strong> &lt;<a href="mailto:{$escapedEmail}" style="color: #0056d6; text-decoration: none;">{$escapedEmail}</a>&gt;</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600; color: #718096;">Тема:</td>
+                                        <td>{$escapedSubject}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600; color: #718096;">Дата:</td>
+                                        <td>{$dateStr}</td>
+                                    </tr>
+                                </table>
+                            </div>
+
+                            <h3 style="margin: 0 0 12px; font-size: 16px; font-weight: 600; color: #12233f;">Текст обращения:</h3>
+                            <div style="background-color: #ffffff; border-left: 4px solid #0056d6; border-top: 1px solid #edf2f7; border-right: 1px solid #edf2f7; border-bottom: 1px solid #edf2f7; border-radius: 4px; padding: 16px 20px; font-size: 14px; line-height: 22px; color: #2d3748; white-space: pre-wrap;">{$escapedMessage}</div>
+
+                            <p style="margin: 24px 0 0; font-size: 13px; color: #718096; line-height: 20px;">
+                                Чтобы ответить пользователю, просто нажмите «Ответить» (Reply) в вашем почтовом клиенте — адрес для ответа установлен на <strong>{$escapedEmail}</strong>.
+                            </p>
+                        </td>
+                    </tr>
+                    <!-- Подвал -->
+                    <tr>
+                        <td style="padding: 16px 36px; background-color: #fafbfc; border-top: 1px solid #edf2f7; text-align: center; font-size: 12px; color: #a0aec0;">
+                            Сервис коротких ссылок: <a href="{$appUrl}" style="color: #718096; text-decoration: underline;">{$appUrl}</a>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+HTML;
+
+        $textBody = "Новое обращение из формы обратной связи ({$appName})\n\n"
+            . "Тип: {$categoryLabel}\n"
+            . "От: " . ($senderName ?: 'Не указано') . " <{$senderEmail}>\n"
+            . "Тема: {$safeSubject}\n"
+            . "Дата: {$dateStr}\n\n"
+            . "Текст обращения:\n"
+            . "------------------------------------------------------------\n"
+            . "{$message}\n"
+            . "------------------------------------------------------------\n\n"
+            . "Для ответа ответьте на это письмо ({$senderEmail}).\n";
+
+        return $this->send($toEmail, $subject, $htmlBody, $textBody, $senderEmail);
+    }
+
+    /**
      * Отправка письма выбранным драйвером (mail или smtp).
      */
-    public function send(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null): bool
+    public function send(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null, ?string $replyTo = null): bool
     {
         $logOnly = $this->config->getBool('MAIL_LOG_ONLY', false);
         if ($logOnly) {
@@ -204,9 +325,9 @@ HTML;
 
         try {
             if ($driver === 'smtp') {
-                return $this->sendSmtp($toEmail, $subject, $htmlBody, $textBody);
+                return $this->sendSmtp($toEmail, $subject, $htmlBody, $textBody, $replyTo);
             }
-            return $this->sendNativeMail($toEmail, $subject, $htmlBody, $textBody);
+            return $this->sendNativeMail($toEmail, $subject, $htmlBody, $textBody, $replyTo);
         } catch (Throwable $e) {
             error_log('Ошибка отправки email: ' . $e->getMessage());
             // В случае ошибки драйвера, также запишем в резервный лог
@@ -215,7 +336,7 @@ HTML;
         }
     }
 
-    private function sendNativeMail(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null): bool
+    private function sendNativeMail(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null, ?string $replyTo = null): bool
     {
         if (!function_exists('mail')) {
             $this->logMail($toEmail, $subject, "FUNCTION mail() IS NOT AVAILABLE:\n" . $htmlBody);
@@ -230,10 +351,14 @@ HTML;
 
         $boundary = 'bnd_' . md5(uniqid((string) microtime(true), true));
 
+        $replyToEmail = $replyTo !== null && filter_var($replyTo, FILTER_VALIDATE_EMAIL)
+            ? $replyTo
+            : $fromEmail;
+
         $headers = [
             'MIME-Version: 1.0',
             "From: {$encodedFromName} <{$fromEmail}>",
-            "Reply-To: <{$fromEmail}>",
+            "Reply-To: <{$replyToEmail}>",
             'X-Mailer: PHP/' . PHP_VERSION,
             "Content-Type: multipart/alternative; boundary=\"{$boundary}\"",
         ];
@@ -263,7 +388,7 @@ HTML;
         return $sent;
     }
 
-    private function sendSmtp(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null): bool
+    private function sendSmtp(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null, ?string $replyTo = null): bool
     {
         $host = $this->config->get('SMTP_HOST', '');
         $port = (int) $this->config->get('SMTP_PORT', '465');
@@ -273,7 +398,7 @@ HTML;
 
         if ($host === '') {
             // Если SMTP хост не заполнен, переключаемся на native mail
-            return $this->sendNativeMail($toEmail, $subject, $htmlBody, $textBody);
+            return $this->sendNativeMail($toEmail, $subject, $htmlBody, $textBody, $replyTo);
         }
 
         $remoteSocket = ($encryption === 'ssl' ? "ssl://{$host}" : "tcp://{$host}") . ":{$port}";
@@ -309,12 +434,16 @@ HTML;
         $encodedFromName = '=?UTF-8?B?' . base64_encode($fromName) . '?=';
         $boundary = 'bnd_' . md5(uniqid((string) microtime(true), true));
 
+        $replyToEmail = $replyTo !== null && filter_var($replyTo, FILTER_VALIDATE_EMAIL)
+            ? $replyTo
+            : $fromEmail;
+
         $dataHeaders = [
             'MIME-Version: 1.0',
             "From: {$encodedFromName} <{$fromEmail}>",
             "To: <{$toEmail}>",
             "Subject: {$encodedSubject}",
-            "Reply-To: <{$fromEmail}>",
+            "Reply-To: <{$replyToEmail}>",
             "Content-Type: multipart/alternative; boundary=\"{$boundary}\"",
         ];
 

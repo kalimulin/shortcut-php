@@ -7,6 +7,7 @@ require_once __DIR__ . '/autoload.php';
 use App\Config;
 use App\Controllers\AuthController;
 use App\Controllers\CampaignController;
+use App\Controllers\FeedbackController;
 use App\Controllers\InfoController;
 use App\Controllers\ProfileController;
 use App\Controllers\PublicController;
@@ -85,11 +86,13 @@ try {
     $campaignCtrl = new CampaignController($campaignService, $shortcutService);
     $statsCtrl = new StatsController($statsService, $statsExportService, $shortcutService, $campaignService);
     $urlCheckCtrl = new UrlCheckController($urlCheckService);
+    $feedbackCtrl = new FeedbackController($mailerService, $botProtection, $config);
 
     $requireAuth = [$auth->requireAuth()];
     $requireAdmin = [$auth->requireAdmin()];
     $publicShortcutRl = [$rateLimit->limit('public_shortcut', $config->getInt('RATE_LIMIT_PUBLIC_SHORTCUT_PER_MIN', 20), 60)];
     $loginRl = [$rateLimit->limit('auth_login', $config->getInt('RATE_LIMIT_LOGIN_PER_MIN', 15), 60)];
+    $feedbackRl = [$rateLimit->limit('feedback', $config->getInt('RATE_LIMIT_FEEDBACK_PER_MIN', 10), 60)];
 
     $router = new Router();
 
@@ -108,11 +111,13 @@ try {
     $router->add('PATCH', '/profile', [$profileCtrl, 'update'], $requireAuth);
     $router->add('DELETE', '/profile', [$profileCtrl, 'delete'], $requireAuth);
 
-    // Публичные ручки (гостевые ссылки, проверка URL, QR)
+    // Публичные ручки (гостевые ссылки, проверка URL, QR, обратная связь)
     $router->add('POST', '/public/shortcuts', [$publicCtrl, 'createShortcut'], $publicShortcutRl);
     $router->add('POST', '/public/url-check', [$publicCtrl, 'checkUrl']);
     $router->add('GET', '/public/qr/{code}', [$publicCtrl, 'getQrMeta']);
     $router->add('GET', '/public/qr/{code}/image', [$publicCtrl, 'getQrImage']);
+    $router->add('POST', '/feedback', [$feedbackCtrl, 'send'], $feedbackRl);
+    $router->add('POST', '/public/feedback', [$feedbackCtrl, 'send'], $feedbackRl);
 
     // Ссылки и теги
     $router->add('GET', '/shortcuts', [$shortcutCtrl, 'list'], $requireAuth);
