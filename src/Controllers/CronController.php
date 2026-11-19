@@ -8,9 +8,13 @@ use App\Config;
 use App\Http\ApiException;
 use App\Http\Request;
 use App\Http\Response;
+use App\Repositories\UrlCheckCacheRepository;
 use App\Repositories\UserRepository;
 use App\Services\CleanupService;
+use App\Services\DateHelper;
 use App\Services\JwtService;
+use App\Services\UrlSecurity\RfRegistrySyncService;
+use App\Services\UrlSecurity\UrlScannerService;
 
 final class CronController
 {
@@ -19,6 +23,9 @@ final class CronController
         private readonly Config $config,
         private readonly ?JwtService $jwt = null,
         private readonly ?UserRepository $userRepo = null,
+        private readonly ?RfRegistrySyncService $rfSyncService = null,
+        private readonly ?UrlCheckCacheRepository $cacheRepo = null,
+        private readonly ?UrlScannerService $scannerService = null,
     ) {
     }
 
@@ -43,6 +50,80 @@ final class CronController
             'message' => $dryRun ? 'Тестовая проверка очистки базы данных' : 'Очистка базы данных успешно выполнена',
             'result' => $result,
         ]);
+    }
+
+    /**
+     * Эндпоинт периодической синхронизации безопасности ссылок для веб-крона.
+     * Защищён секретным ключом (CRON_SECRET_KEY) либо JWT-токеном администратора.
+     */
+    public function securitySync(Request $request): never
+    {
+        $this->ensureAuthorized($request);
+
+        @set_time_limit(180);
+        @ini_set('memory_limit', '256M');
+
+        $startTime = microtime(true);
+        $syncRf = true;
+        $pruneCache = true;
+        $scanLinks = true;
+
+        $hasSpecific = isset($request->query['syncRf']) || isset($request->query['pruneCache']) || isset($request->query['scanLinks']);
+        if ($hasSpecific) {
+            $syncRf = self::toBool($request->query['syncRf'] ?? null);
+            $pruneCache = self::toBool($request->query['pruneCache'] ?? null);
+            $scanLinks = self::toBool($request->query['scanLinks'] ?? null);
+        }
+
+        $report = [
+            'timestamp' => DateHelper::nowUtc()->format('Y-m-d\TH:i:s\Z'),
+            'rfRegistrySync' => null,
+            'cachePruned' => null,
+            'linkScan' => null,
+        ];
+
+        // 1. Синхронизация реестра РФ
+        if ($syncRf && $this->rfSyncService !== null) {
+            if ($this->config->getBool('RF_REGISTRY_SYNC_ENABLED', true)) {
+                $customMirror = isset($request->query['mirrorUrl']) && is_string($request->query['mirrorUrl'])
+                    ? trim($request->query['mirrorUrl'])
+                    : null;
+                $report['rfRegistrySync'] = $this->rfSyncService->sync($customMirror);
+            } else {
+                $report['rfRegistrySync'] = ['skipped' => true, 'reason' => 'RF_REGISTRY_SYNC_ENABLED is false'];
+            }
+        }
+
+        // 2. Очистка кэша проверок
+        if ($pruneCache && $this->cacheRepo !== null) {
+            $nowMysql = DateHelper::toMysqlUtc(DateHelper::nowUtc());
+            $deleted = $this->cacheRepo->pruneExpired($nowMysql);
+            $report['cachePruned'] = ['deletedEntries' => $deleted];
+        }
+
+        // 3. Сканирование активных ссылок
+        if ($scanLinks && $this->scannerService !== null) {
+            $limit = min(500, max(1, (int) ($request->query['scanLimit'] ?? 100)));
+            $report['linkScan'] = $this->scannerService->scanActiveShortcuts($limit);
+        }
+
+        $duration = round(microtime(true) - $startTime, 3);
+        $report['durationSeconds'] = $duration;
+
+        Response::json([
+            'status' => 'ok',
+            'message' => 'Синхронизация безопасности ссылок успешно выполнена',
+            'result' => $report,
+        ]);
+    }
+
+    private static function toBool(mixed $val): bool
+    {
+        if ($val === null) {
+            return false;
+        }
+        $str = strtolower(trim((string) $val));
+        return in_array($str, ['1', 'true', 'yes', 'on'], true);
     }
 
     private function ensureAuthorized(Request $request): void

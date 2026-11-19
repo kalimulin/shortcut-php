@@ -48,6 +48,7 @@ use App\Services\UrlSecurity\Providers\GoogleSafeBrowsingProvider;
 use App\Services\UrlSecurity\Providers\UrlhausProvider;
 use App\Services\UrlSecurity\Providers\VirusTotalProvider;
 use App\Services\UrlSecurity\RfRegistrySyncService;
+use App\Services\UrlSecurity\UrlScannerService;
 use App\Services\UrlSecurity\UrlSecurityManager;
 use App\Services\UrlTools;
 
@@ -119,7 +120,16 @@ try {
     $whitelistCtrl = new WhitelistController($whitelistRepo);
     $feedbackCtrl = new FeedbackController($mailerService, $botProtection, $config);
     $cleanupService = new CleanupService($db, $config, $shortcutRepo, $userRepo);
-    $cronCtrl = new CronController($cleanupService, $config, $jwt, $userRepo);
+    $urlScannerService = new UrlScannerService($db, $securityManager);
+    $cronCtrl = new CronController(
+        $cleanupService,
+        $config,
+        $jwt,
+        $userRepo,
+        $rfSyncService,
+        $cacheRepo,
+        $urlScannerService
+    );
 
     $requireAuth = [$auth->requireAuth()];
     $requireAdmin = [$auth->requireAdmin()];
@@ -133,6 +143,8 @@ try {
     $router->add('GET', '/info', [$infoCtrl, 'info']);
     $router->add('POST', '/cron/cleanup', [$cronCtrl, 'cleanup']);
     $router->add('GET', '/cron/cleanup', [$cronCtrl, 'cleanup']);
+    $router->add('POST', '/cron/security-sync', [$cronCtrl, 'securitySync']);
+    $router->add('GET', '/cron/security-sync', [$cronCtrl, 'securitySync']);
 
     // Авторизация и профиль
     $router->add('POST', '/auth/register', [$authCtrl, 'register'], $loginRl);
