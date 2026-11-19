@@ -218,9 +218,17 @@ HTML;
             $toEmail = $this->config->get('SUPPORT_EMAIL', '');
         }
         if ($toEmail === '') {
-            $host = $this->config->shortBaseHost() ?: 'омни.рус';
-            $toEmail = "support@{$host}";
+            $from = $this->config->get('MAIL_FROM_ADDRESS', '');
+            if ($from !== '' && str_contains($from, '@')) {
+                $fromDomain = explode('@', $from, 2)[1];
+                $toEmail = "support@{$fromDomain}";
+            } else {
+                $host = $this->config->shortBaseHost() ?: 'омни.рус';
+                $toEmail = "support@{$host}";
+            }
         }
+
+        $toEmail = self::toAsciiEmail($toEmail);
 
         $appUrl = rtrim($this->config->appUrl(), '/');
         $escapedCategory = htmlspecialchars($categoryLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -338,12 +346,14 @@ HTML;
 
     private function sendNativeMail(string $toEmail, string $subject, string $htmlBody, ?string $textBody = null, ?string $replyTo = null): bool
     {
+        $toEmail = self::toAsciiEmail($toEmail);
+
         if (!function_exists('mail')) {
             $this->logMail($toEmail, $subject, "FUNCTION mail() IS NOT AVAILABLE:\n" . $htmlBody);
             return false;
         }
 
-        $fromEmail = $this->getFromEmail();
+        $fromEmail = self::toAsciiEmail($this->getFromEmail());
         $fromName = $this->config->get('MAIL_FROM_NAME', 'Омни Ссылки');
 
         $encodedSubject = '=?UTF-8?B?' . base64_encode($subject) . '?=';
@@ -351,9 +361,10 @@ HTML;
 
         $boundary = 'bnd_' . md5(uniqid((string) microtime(true), true));
 
-        $replyToEmail = $replyTo !== null && filter_var($replyTo, FILTER_VALIDATE_EMAIL)
-            ? $replyTo
-            : $fromEmail;
+        $replyToEmail = $replyTo !== null ? self::toAsciiEmail($replyTo) : $fromEmail;
+        if (!filter_var($replyToEmail, FILTER_VALIDATE_EMAIL)) {
+            $replyToEmail = $fromEmail;
+        }
 
         $headers = [
             'MIME-Version: 1.0',
@@ -424,7 +435,8 @@ HTML;
             $this->writeSmtpCommand($socket, base64_encode($pass), [235]);
         }
 
-        $fromEmail = $this->getFromEmail();
+        $toEmail = self::toAsciiEmail($toEmail);
+        $fromEmail = self::toAsciiEmail($this->getFromEmail());
         $this->writeSmtpCommand($socket, "MAIL FROM:<{$fromEmail}>", [250]);
         $this->writeSmtpCommand($socket, "RCPT TO:<{$toEmail}>", [250, 251]);
         $this->writeSmtpCommand($socket, 'DATA', [354]);
@@ -434,9 +446,10 @@ HTML;
         $encodedFromName = '=?UTF-8?B?' . base64_encode($fromName) . '?=';
         $boundary = 'bnd_' . md5(uniqid((string) microtime(true), true));
 
-        $replyToEmail = $replyTo !== null && filter_var($replyTo, FILTER_VALIDATE_EMAIL)
-            ? $replyTo
-            : $fromEmail;
+        $replyToEmail = $replyTo !== null ? self::toAsciiEmail($replyTo) : $fromEmail;
+        if (!filter_var($replyToEmail, FILTER_VALIDATE_EMAIL)) {
+            $replyToEmail = $fromEmail;
+        }
 
         $dataHeaders = [
             'MIME-Version: 1.0',
@@ -489,6 +502,40 @@ HTML;
     {
         fwrite($socket, $command . "\r\n");
         return $this->readSmtpResponse($socket, $expectedCodes);
+    }
+
+    /**
+     * Преобразует доменную часть email-адреса в punycode (ASCII), если она содержит кириллицу.
+     */
+    public static function toAsciiEmail(string $email): string
+    {
+        $email = trim($email);
+        $pos = strrpos($email, '@');
+        if ($pos === false) {
+            return $email;
+        }
+
+        $user = substr($email, 0, $pos);
+        $domain = substr($email, $pos + 1);
+
+        // Если домен уже ASCII
+        if (preg_match('/^[a-zA-Z0-9.\-_]+$/', $domain) === 1) {
+            return $email;
+        }
+
+        if (function_exists('idn_to_ascii')) {
+            $variant = defined('INTL_IDNA_VARIANT_UTS46') ? INTL_IDNA_VARIANT_UTS46 : 0;
+            $ascii = @idn_to_ascii($domain, IDNA_DEFAULT, $variant);
+            if ($ascii !== false && $ascii !== '') {
+                return $user . '@' . $ascii;
+            }
+        }
+
+        if (mb_strtolower($domain) === 'омни.рус') {
+            return $user . '@xn--h1ahdc.xn--p1acf';
+        }
+
+        return $email;
     }
 
     private function getFromEmail(): string
