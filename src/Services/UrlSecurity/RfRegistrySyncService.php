@@ -49,15 +49,17 @@ final class RfRegistrySyncService
 
         $timeout = $this->config->getInt('RF_REGISTRY_SYNC_TIMEOUT', 60);
 
-        $downloadedFile = null;
+        $downloadedStream = null;
+        $downloadedPath = null;
         $activeMirror = $configuredUrl;
         $downloadedSize = 0;
         $lastError = null;
 
         foreach ($candidateUrls as $url) {
-            $dlResult = $this->downloadToTemp($url, $timeout);
-            if ($dlResult['statusCode'] === 200 && $dlResult['path'] !== null && $dlResult['size'] > 100) {
-                $downloadedFile = $dlResult['path'];
+            $dlResult = $this->downloadToStream($url, $timeout);
+            if ($dlResult['statusCode'] === 200 && $dlResult['resource'] !== null && $dlResult['size'] > 100) {
+                $downloadedStream = $dlResult['resource'];
+                $downloadedPath = $dlResult['path'];
                 $activeMirror = $url;
                 $downloadedSize = $dlResult['size'];
                 $lastError = null;
@@ -67,7 +69,7 @@ final class RfRegistrySyncService
             $lastError = $dlResult['error'] ?: "HTTP download status {$dlResult['statusCode']}";
         }
 
-        if ($downloadedFile === null) {
+        if ($downloadedStream === null) {
             $duration = round(microtime(true) - $startTime, 3);
             return [
                 'success' => false,
@@ -81,7 +83,7 @@ final class RfRegistrySyncService
         }
 
         try {
-            $entries = $this->parseFile($downloadedFile, $maxEntries);
+            $entries = $this->parseStream($downloadedStream, $maxEntries);
             $this->rfRepo->truncateSyncSource('sync');
             $inserted = $this->rfRepo->batchInsert($entries);
 
@@ -97,8 +99,11 @@ final class RfRegistrySyncService
                 'error' => null,
             ];
         } finally {
-            if (is_file($downloadedFile)) {
-                @unlink($downloadedFile);
+            if (is_resource($downloadedStream)) {
+                @fclose($downloadedStream);
+            }
+            if ($downloadedPath !== null && is_file($downloadedPath)) {
+                @unlink($downloadedPath);
             }
         }
     }
@@ -134,25 +139,22 @@ final class RfRegistrySyncService
     }
 
     /**
-     * Downloads URL into a temporary file using cURL stream (constant low memory usage).
-     * @return array{statusCode: int, path: ?string, size: int, error: ?string}
+     * Downloads URL into a temporary stream/file using cURL stream (constant low memory usage).
+     * @return array{statusCode: int, resource: ?resource, path: ?string, size: int, error: ?string}
      */
-    private function downloadToTemp(string $url, int $timeout): array
+    private function downloadToStream(string $url, int $timeout): array
     {
         if (!function_exists('curl_init')) {
-            return ['statusCode' => 0, 'path' => null, 'size' => 0, 'error' => 'cURL extension is not installed'];
+            return ['statusCode' => 0, 'resource' => null, 'path' => null, 'size' => 0, 'error' => 'cURL extension is not installed'];
         }
 
-        $tmpFile = tempnam(sys_get_temp_dir(), 'rf_reg_');
-        if ($tmpFile === false) {
-            return ['statusCode' => 0, 'path' => null, 'size' => 0, 'error' => 'Cannot create temp file'];
+        $stream = $this->openTempStream();
+        if ($stream['resource'] === null) {
+            return ['statusCode' => 0, 'resource' => null, 'path' => null, 'size' => 0, 'error' => $stream['error'] ?: 'Cannot create temporary stream'];
         }
 
-        $fp = fopen($tmpFile, 'w+');
-        if ($fp === false) {
-            @unlink($tmpFile);
-            return ['statusCode' => 0, 'path' => null, 'size' => 0, 'error' => 'Cannot open temp file for writing'];
-        }
+        $fp = $stream['resource'];
+        $filePath = $stream['path'];
 
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_FILE, $fp);
@@ -168,43 +170,98 @@ final class RfRegistrySyncService
         $statusCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = curl_error($ch);
         curl_close($ch);
-        fclose($fp);
 
-        $size = is_file($tmpFile) ? (int) filesize($tmpFile) : 0;
+        $size = 0;
+        if ($filePath !== null && is_file($filePath)) {
+            $size = (int) filesize($filePath);
+        } else {
+            $stat = @fstat($fp);
+            $size = is_array($stat) ? (int) ($stat['size'] ?? 0) : 0;
+        }
 
         if (!$success || $statusCode !== 200 || $size === 0) {
-            @unlink($tmpFile);
+            @fclose($fp);
+            if ($filePath !== null && is_file($filePath)) {
+                @unlink($filePath);
+            }
             return [
                 'statusCode' => $statusCode,
+                'resource' => null,
                 'path' => null,
                 'size' => $size,
                 'error' => $curlError ?: "HTTP download status {$statusCode}",
             ];
         }
 
+        rewind($fp);
         return [
             'statusCode' => 200,
-            'path' => $tmpFile,
+            'resource' => $fp,
+            'path' => $filePath,
             'size' => $size,
             'error' => null,
         ];
     }
 
     /**
-     * Line-by-line stream parsing of the downloaded dump file.
+     * Creates a temporary stream, prioritizing local project storage/tmp directory
+     * (safe from open_basedir restrictions), falling back to sys_get_temp_dir() and php://temp.
+     * @return array{resource: ?resource, path: ?string, error: ?string}
+     */
+    private function openTempStream(): array
+    {
+        // 1. Try local project storage/tmp directory (safe from open_basedir)
+        $projectDirs = [
+            dirname(__DIR__, 3) . '/storage/tmp',
+            dirname(__DIR__, 2) . '/storage/tmp',
+            dirname(__DIR__) . '/storage/tmp',
+        ];
+
+        foreach ($projectDirs as $dir) {
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0775, true);
+            }
+            if (is_dir($dir) && is_writable($dir)) {
+                $filePath = $dir . '/rf_sync_' . bin2hex(random_bytes(8)) . '.tmp';
+                $fp = @fopen($filePath, 'w+');
+                if ($fp !== false) {
+                    return ['resource' => $fp, 'path' => $filePath, 'error' => null];
+                }
+            }
+        }
+
+        // 2. Try system temp dir
+        $sysDir = @sys_get_temp_dir();
+        if ($sysDir !== '' && is_dir($sysDir) && is_writable($sysDir)) {
+            $tmpFile = @tempnam($sysDir, 'rf_reg_');
+            if ($tmpFile !== false) {
+                $fp = @fopen($tmpFile, 'w+');
+                if ($fp !== false) {
+                    return ['resource' => $fp, 'path' => $tmpFile, 'error' => null];
+                }
+            }
+        }
+
+        // 3. Fallback to PHP in-memory / internal temp stream (never fails on any hosting)
+        $fp = @fopen('php://temp', 'w+');
+        if ($fp !== false) {
+            return ['resource' => $fp, 'path' => null, 'error' => null];
+        }
+
+        return ['resource' => null, 'path' => null, 'error' => 'Cannot create temporary stream'];
+    }
+
+    /**
+     * Stream parsing of the downloaded dump.
      * Supports:
      *  - BlockedIn JSON array: ["domain1", "domain2", ...]
      *  - zapret-info CSV: IP;domain;URL;decision;date;agency;num
      *  - Plain domain/URL/IP list
+     * @param resource $fp
      * @return list<array{type: string, value: string, comment: ?string, source: string, created_at: string}>
      */
-    private function parseFile(string $filePath, int $maxEntries): array
+    private function parseStream($fp, int $maxEntries): array
     {
-        $fp = fopen($filePath, 'r');
-        if ($fp === false) {
-            return [];
-        }
-
         $entries = [];
         $seen = [];
         $nowMysql = DateHelper::toMysqlUtc(DateHelper::nowUtc());
@@ -362,7 +419,6 @@ final class RfRegistrySyncService
             }
         }
 
-        fclose($fp);
         return $entries;
     }
 }
