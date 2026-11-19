@@ -10,7 +10,7 @@ use App\Repositories\BlacklistRepository;
 
 final class UrlCheckService
 {
-    public const CHECKED_BY = 'OmniNotice Security System';
+    public const CHECKED_BY = 'Система безопасности омни.рус';
     public const MSG_INVALID = 'Некорректный URL. Проверьте формат URL.';
     public const MSG_BLOCKED = 'Ссылка заблокирована. Перенаправление на данный ресурс запрещено соображениями безопасности.';
 
