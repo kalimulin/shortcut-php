@@ -477,4 +477,14 @@ final class ShortcutRepository
         $stmt->execute([':threshold' => $thresholdMysql, ':now' => $nowMysql]);
         return (int) $stmt->fetchColumn();
     }
+
+    /**
+     * Подсчёт активных (неудалённых) ссылок пользователя для проверки лимитов.
+     */
+    public function countActiveForUser(string $userId): int
+    {
+        $stmt = $this->db->pdo()->prepare('SELECT COUNT(*) FROM shortcuts WHERE user_id = :uid AND is_deleted = 0');
+        $stmt->execute([':uid' => $userId]);
+        return (int) $stmt->fetchColumn();
+    }
 }

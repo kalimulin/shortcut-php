@@ -219,4 +219,14 @@ final class CampaignRepository
 
         return $campaigns;
     }
+
+    /**
+     * Подсчёт активных (неудалённых) кампаний пользователя для проверки лимитов.
+     */
+    public function countActiveForUser(string $userId): int
+    {
+        $stmt = $this->db->pdo()->prepare('SELECT COUNT(*) FROM campaigns WHERE user_id = :uid AND is_deleted = 0');
+        $stmt->execute([':uid' => $userId]);
+        return (int) $stmt->fetchColumn();
+    }
 }

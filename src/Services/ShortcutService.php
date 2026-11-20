@@ -19,6 +19,7 @@ final class ShortcutService
         private readonly UrlCheckService $urlCheckService,
         private readonly ShortcutRepository $shortcutRepo,
         private readonly CampaignRepository $campaignRepo,
+        private readonly ?UserLimitsService $userLimitsService = null,
     ) {
     }
 
@@ -62,6 +63,8 @@ final class ShortcutService
      */
     public function createForUser(string $userId, array $input): array
     {
+        $this->userLimitsService?->assertCanCreateShortcut($userId);
+
         $title = trim((string) ($input['title'] ?? ''));
         if ($title === '') {
             throw ApiException::badRequest('VALIDATION_ERROR', 'Укажите название ссылки (title)');
@@ -370,6 +373,8 @@ final class ShortcutService
     /** @return array<string, mixed> */
     public function claimPublicShortcut(string $code, string $userId): array
     {
+        $this->userLimitsService?->assertCanCreateShortcut($userId);
+
         if (preg_match(UrlTools::SHORTCUT_CODE_REGEX, $code) !== 1) {
             throw ApiException::notFound('SHORTCUT_NOT_FOUND', 'Короткая ссылка не найдена');
         }

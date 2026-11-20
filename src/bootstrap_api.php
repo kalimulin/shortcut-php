@@ -51,6 +51,7 @@ use App\Services\UrlSecurity\RfRegistrySyncService;
 use App\Services\UrlSecurity\UrlScannerService;
 use App\Services\UrlSecurity\UrlSecurityManager;
 use App\Services\UrlTools;
+use App\Services\UserLimitsService;
 
 $config = new Config();
 Response::applyCors($config);
@@ -96,8 +97,9 @@ try {
     $rfSyncService = new RfRegistrySyncService($config, $rfRegistryRepo);
 
     $urlCheckService = new UrlCheckService($config, $urlTools, $blacklistRepo, $securityManager);
-    $shortcutService = new ShortcutService($config, $urlTools, $urlCheckService, $shortcutRepo, $campaignRepo);
-    $campaignService = new CampaignService($campaignRepo);
+    $userLimitsService = new UserLimitsService($userRepo, $shortcutRepo, $campaignRepo);
+    $shortcutService = new ShortcutService($config, $urlTools, $urlCheckService, $shortcutRepo, $campaignRepo, $userLimitsService);
+    $campaignService = new CampaignService($campaignRepo, $userLimitsService);
     $statsService = new StatsService($config, $clickRepo);
     $statsExportService = new StatsExportService();
     $qrSvgService = new QrSvgService();
@@ -111,7 +113,7 @@ try {
     // Контроллеры
     $infoCtrl = new InfoController($config, $db);
     $authCtrl = new AuthController($userRepo, $jwt, $emailVerificationRepo, $mailerService, $botProtection, $config, $passwordResetRepo);
-    $profileCtrl = new ProfileController($userRepo);
+    $profileCtrl = new ProfileController($userRepo, $userLimitsService);
     $publicCtrl = new PublicController($shortcutService, $urlCheckService, $qrSvgService);
     $shortcutCtrl = new ShortcutController($shortcutService);
     $campaignCtrl = new CampaignController($campaignService, $shortcutService);
@@ -155,6 +157,8 @@ try {
     $router->add('POST', '/auth/login', [$authCtrl, 'login'], $loginRl);
     $router->add('PATCH', '/auth/password', [$authCtrl, 'changePassword'], $requireAuth);
     $router->add('GET', '/profile', [$profileCtrl, 'get'], $requireAuth);
+    $router->add('GET', '/profile/limits', [$profileCtrl, 'getLimits'], $requireAuth);
+    $router->add('GET', '/user/limits', [$profileCtrl, 'getLimits'], $requireAuth);
     $router->add('PATCH', '/profile', [$profileCtrl, 'update'], $requireAuth);
     $router->add('DELETE', '/profile', [$profileCtrl, 'delete'], $requireAuth);
 

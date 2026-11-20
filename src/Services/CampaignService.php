@@ -9,8 +9,10 @@ use App\Repositories\CampaignRepository;
 
 final class CampaignService
 {
-    public function __construct(private readonly CampaignRepository $campaignRepo)
-    {
+    public function __construct(
+        private readonly CampaignRepository $campaignRepo,
+        private readonly ?UserLimitsService $userLimitsService = null,
+    ) {
     }
 
     /**
@@ -57,6 +59,8 @@ final class CampaignService
      */
     public function createForUser(string $userId, array $input): array
     {
+        $this->userLimitsService?->assertCanCreateCampaign($userId);
+
         $name = trim((string) ($input['name'] ?? $input['title'] ?? ''));
         if ($name === '' || mb_strlen($name) > 255) {
             throw ApiException::badRequest('VALIDATION_ERROR', 'Укажите название кампании (name, до 255 символов)');

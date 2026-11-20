@@ -9,11 +9,14 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Repositories\UserRepository;
 use App\Services\DateHelper;
+use App\Services\UserLimitsService;
 
 final class ProfileController
 {
-    public function __construct(private readonly UserRepository $userRepo)
-    {
+    public function __construct(
+        private readonly UserRepository $userRepo,
+        private readonly ?UserLimitsService $userLimitsService = null,
+    ) {
     }
 
     public function get(Request $request): never
@@ -24,7 +27,24 @@ final class ProfileController
             throw ApiException::notFound('USER_NOT_FOUND', 'Пользователь не найден');
         }
 
-        Response::json($this->serializeProfile($user));
+        $profile = $this->serializeProfile($user);
+        if ($this->userLimitsService !== null) {
+            $profile['limits'] = $this->userLimitsService->getUserLimits($userId);
+        }
+        Response::json($profile);
+    }
+
+    public function getLimits(Request $request): never
+    {
+        $userId = (string) $request->getAttribute('userId');
+        if ($this->userLimitsService === null) {
+            Response::json([
+                'plan' => 'free',
+                'shortcuts' => ['used' => 0, 'max' => 50, 'remaining' => 50, 'isReached' => false],
+                'campaigns' => ['used' => 0, 'max' => 5, 'remaining' => 5, 'isReached' => false],
+            ]);
+        }
+        Response::json($this->userLimitsService->getUserLimits($userId));
     }
 
     public function update(Request $request): never
@@ -70,7 +90,11 @@ final class ProfileController
         if ($updated === null) {
             throw ApiException::notFound('USER_NOT_FOUND', 'Пользователь не найден');
         }
-        Response::json($this->serializeProfile($updated));
+        $profile = $this->serializeProfile($updated);
+        if ($this->userLimitsService !== null) {
+            $profile['limits'] = $this->userLimitsService->getUserLimits($userId);
+        }
+        Response::json($profile);
     }
 
     public function delete(Request $request): never
